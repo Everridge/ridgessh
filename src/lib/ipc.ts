@@ -48,6 +48,17 @@ export interface TagWithCount extends Tag {
   hostCount: number;
 }
 
+/** Connection part of a host, as it maps to a `Host` block in ssh_config. */
+export interface Connection {
+  alias: string;
+  hostname: string | null;
+  user: string | null;
+  port: number | null;
+  identityFile: string | null;
+  proxyJump: string | null;
+  extraOptions: Directive[];
+}
+
 export interface Host {
   id: string;
   alias: string;
@@ -64,6 +75,10 @@ export interface Host {
   favorite: boolean;
   syncState: SyncState;
   configDirty: boolean;
+  /** What ~/.ssh/config said at the last scan; null if the host is not in the config. */
+  configSnapshot: Connection | null;
+  /** Included file the host comes from; null for the main config file. */
+  configSource: string | null;
   lastSeenInConfigAt: string | null;
   removedFromConfigAt: string | null;
   lastConnectedAt: string | null;
@@ -109,6 +124,32 @@ export interface GroupInput {
   icon: string | null;
 }
 
+export interface RuleBlock {
+  kind: "host" | "match";
+  header: string;
+  source: string;
+  line: number;
+  directiveCount: number;
+}
+
+export interface SyncReport {
+  scannedAt: string;
+  configPath: string;
+  configHosts: number;
+  added: string[];
+  updated: string[];
+  removed: string[];
+  reappeared: string[];
+  conflicts: string[];
+  rules: RuleBlock[];
+  warnings: string[];
+}
+
+export interface RenameSuggestion {
+  fromId: string;
+  toId: string;
+}
+
 export interface AuditEntry {
   id: number;
   ts: string;
@@ -145,4 +186,14 @@ export const api = {
 
   tagsList: () => invoke<TagWithCount[]>("tags_list"),
   tagDelete: (id: string) => invoke<void>("tag_delete", { id }),
+
+  syncRun: () => invoke<SyncReport>("sync_run"),
+  syncLast: () => invoke<SyncReport | null>("sync_last"),
+  syncRenameSuggestions: () => invoke<RenameSuggestion[]>("sync_rename_suggestions"),
+  syncAcknowledge: (ids: string[]) => invoke<void>("sync_acknowledge", { ids }),
+  syncKeepDbOnly: (ids: string[]) => invoke<void>("sync_keep_db_only", { ids }),
+  syncResolveConflict: (id: string, keep: "config" | "database") =>
+    invoke<Host>("sync_resolve_conflict", { id, keep }),
+  syncAcceptRename: (fromId: string, toId: string) =>
+    invoke<Host>("sync_accept_rename", { fromId, toId }),
 };

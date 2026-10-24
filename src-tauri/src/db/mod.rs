@@ -12,8 +12,12 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::error::{AppError, AppResult};
 
-static MIGRATIONS: LazyLock<Migrations<'static>> =
-    LazyLock::new(|| Migrations::new(vec![M::up(include_str!("migrations/001_init.sql"))]));
+static MIGRATIONS: LazyLock<Migrations<'static>> = LazyLock::new(|| {
+    Migrations::new(vec![
+        M::up(include_str!("migrations/001_init.sql")),
+        M::up(include_str!("migrations/002_config_tracking.sql")),
+    ])
+});
 
 /// Single shared connection. The app is single-user and low-traffic, so a mutex is enough.
 pub struct Db {
@@ -43,7 +47,11 @@ impl Db {
     }
 
     /// Runs `f` inside a transaction; commits on `Ok`, rolls back on `Err`.
+    ///
+    /// Not re-entrant: calling `tx` from inside `f` would deadlock on the mutex, so it is
+    /// rejected with an error instead.
     pub fn tx<T>(&self, f: impl FnOnce(&Transaction) -> AppResult<T>) -> AppResult<T> {
+        let _guard = TxGuard::enter()?;
         let mut conn = self
             .conn
             .lock()
@@ -52,6 +60,30 @@ impl Db {
         let out = f(&tx)?;
         tx.commit()?;
         Ok(out)
+    }
+}
+
+thread_local! {
+    static IN_TX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks the current thread as inside `Db::tx` for the guard's lifetime.
+struct TxGuard;
+
+impl TxGuard {
+    fn enter() -> AppResult<Self> {
+        if IN_TX.with(|f| f.replace(true)) {
+            return Err(AppError::Other(
+                "nested database transaction (Db::tx called inside Db::tx)".into(),
+            ));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for TxGuard {
+    fn drop(&mut self) {
+        IN_TX.with(|f| f.set(false));
     }
 }
 
@@ -77,5 +109,14 @@ mod tests {
     #[test]
     fn migrations_are_valid() {
         super::MIGRATIONS.validate().unwrap();
+    }
+
+    #[test]
+    fn nested_tx_errors_instead_of_deadlocking() {
+        let db = super::Db::open_in_memory().unwrap();
+        let inner = db.tx(|_| Ok(db.tx(|_| Ok(())))).unwrap();
+        assert!(inner.is_err());
+        // The guard is released afterwards.
+        db.tx(|_| Ok(())).unwrap();
     }
 }

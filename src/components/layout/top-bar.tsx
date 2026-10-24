@@ -1,6 +1,20 @@
-import { MonitorIcon, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
+import {
+  FileCheckIcon,
+  MonitorIcon,
+  MoonIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  SunIcon,
+} from "lucide-react";
+import { toast } from "sonner";
 import { useTheme } from "@/components/theme-provider";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useHostsData } from "@/features/hosts/queries";
+import { reviewItems, summarize } from "@/features/sync/compare";
+import { useRenameSuggestions, useRunSync } from "@/features/sync/queries";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,9 +46,55 @@ export function TopBar() {
         />
       </div>
       <div className="ml-auto flex items-center gap-1">
+        <SyncControls />
         <ThemeToggle />
       </div>
     </header>
+  );
+}
+
+function SyncControls() {
+  const hosts = useHostsData();
+  const renames = useRenameSuggestions().data ?? [];
+  const rescan = useRunSync();
+  const openReview = useUiStore((s) => s.setSyncReviewOpen);
+  const items = reviewItems(hosts);
+  const attention =
+    items.added.length + items.removed.length + items.conflicts.length + renames.length;
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => openReview(true)}>
+        <FileCheckIcon />
+        Config review
+        {attention > 0 && (
+          <Badge
+            variant={items.conflicts.length ? "destructive" : "secondary"}
+            className="h-4 px-1 tabular-nums"
+          >
+            {attention}
+          </Badge>
+        )}
+      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Rescan SSH config"
+            disabled={rescan.isPending}
+            onClick={() =>
+              rescan.mutate(undefined, {
+                onSuccess: (r) => toast.success(`Config scanned: ${summarize(r) || "no changes"}`),
+              })
+            }
+          >
+            <RefreshCwIcon className={cn(rescan.isPending && "animate-spin")} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Rescan ~/.ssh/config</TooltipContent>
+      </Tooltip>
+    </>
   );
 }
 

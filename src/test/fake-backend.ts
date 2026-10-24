@@ -1,11 +1,27 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { AuditEntry, Group, GroupInput, Host, HostInput } from "@/lib/ipc";
+import type {
+  AuditEntry,
+  Group,
+  GroupInput,
+  Host,
+  HostInput,
+  RenameSuggestion,
+  SyncReport,
+} from "@/lib/ipc";
 
 /**
  * In-memory stand-in for the Rust commands, good enough to drive the UI in tests.
  * Business rules are tested in Rust; this only mirrors the shapes and the obvious behaviour.
  */
-export function installFakeBackend(seed: { hosts?: Partial<Host>[]; groups?: Group[] } = {}) {
+export interface FakeSeed {
+  hosts?: Partial<Host>[];
+  groups?: Group[];
+  /** What the startup `sync_run` reports (host states are taken from `hosts` as seeded). */
+  report?: Partial<SyncReport>;
+  renames?: RenameSuggestion[];
+}
+
+export function installFakeBackend(seed: FakeSeed = {}) {
   let seq = 0;
   const id = () => `id-${++seq}`;
   const now = () => new Date(Date.UTC(2026, 9, 24, 10, 0, seq)).toISOString();
@@ -13,6 +29,8 @@ export function installFakeBackend(seed: { hosts?: Partial<Host>[]; groups?: Gro
   const hosts: Host[] = (seed.hosts ?? []).map((h) => makeHost({ id: id(), ...h }));
   const audit: AuditEntry[] = [];
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  let renames = [...(seed.renames ?? [])];
+  let lastSync: SyncReport | null = null;
 
   const log = (entityId: string, action: AuditEntry["action"], before: unknown, after: unknown) =>
     audit.unshift({
@@ -124,6 +142,52 @@ export function installFakeBackend(seed: { hosts?: Partial<Host>[]; groups?: Gro
       }
       case "tags_list":
         return [];
+      case "sync_run":
+        lastSync = {
+          scannedAt: now(),
+          configPath: "C:\\Users\\me\\.ssh\\config",
+          configHosts: hosts.length,
+          added: [],
+          updated: [],
+          removed: [],
+          reappeared: [],
+          conflicts: [],
+          rules: [],
+          warnings: [],
+          ...seed.report,
+        };
+        return lastSync;
+      case "sync_last":
+        return lastSync;
+      case "sync_rename_suggestions":
+        return renames;
+      case "sync_acknowledge":
+        for (const hid of args.ids as string[]) {
+          const h = find(hid);
+          if (h.syncState === "config_only_new") h.syncState = "synced";
+        }
+        renames = renames.filter((r) => !(args.ids as string[]).includes(r.toId));
+        return null;
+      case "sync_keep_db_only":
+        for (const hid of args.ids as string[]) {
+          Object.assign(find(hid), { syncState: "db_only", configSnapshot: null });
+        }
+        return null;
+      case "sync_resolve_conflict": {
+        const h = find(args.id as string);
+        if (args.keep === "config") Object.assign(h, h.configSnapshot, { configDirty: false });
+        else h.configDirty = true;
+        h.syncState = "synced";
+        return h;
+      }
+      case "sync_accept_rename": {
+        const from = find(args.fromId as string);
+        const to = find(args.toId as string);
+        Object.assign(to, { notes: from.notes, groupId: from.groupId, syncState: "synced" });
+        from.deletedAt = now();
+        renames = renames.filter((r) => r.fromId !== from.id);
+        return to;
+      }
       default:
         throw new Error(`fake backend: unhandled command ${cmd}`);
     }
@@ -149,6 +213,8 @@ export function makeHost(over: Partial<Host> = {}): Host {
     favorite: false,
     syncState: "db_only",
     configDirty: false,
+    configSnapshot: null,
+    configSource: null,
     lastSeenInConfigAt: null,
     removedFromConfigAt: null,
     lastConnectedAt: null,

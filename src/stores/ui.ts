@@ -12,6 +12,8 @@ interface UiState {
   checkedIds: string[];
   /** Host form dialog: `null` closed, `"new"` create, otherwise the host id being edited. */
   hostForm: "new" | string | null;
+  /** Config sync review dialog. */
+  syncReviewOpen: boolean;
   setView: (view: Exclude<HostView, "group">) => void;
   setGroup: (groupId: string) => void;
   setSearch: (search: string) => void;
@@ -20,6 +22,7 @@ interface UiState {
   toggleChecked: (id: string) => void;
   openHostForm: (target: "new" | string) => void;
   closeHostForm: () => void;
+  setSyncReviewOpen: (open: boolean) => void;
 }
 
 /** Pure UI state. Backend data lives in TanStack Query, not here. */
@@ -30,6 +33,7 @@ export const useUiStore = create<UiState>((set) => ({
   selectedHostId: null,
   checkedIds: [],
   hostForm: null,
+  syncReviewOpen: false,
   setView: (view) => set({ view, groupId: null, selectedHostId: null, checkedIds: [] }),
   setGroup: (groupId) => set({ view: "group", groupId, selectedHostId: null, checkedIds: [] }),
   setSearch: (search) => set({ search }),
@@ -43,4 +47,5 @@ export const useUiStore = create<UiState>((set) => ({
     })),
   openHostForm: (hostForm) => set({ hostForm }),
   closeHostForm: () => set({ hostForm: null }),
+  setSyncReviewOpen: (syncReviewOpen) => set({ syncReviewOpen }),
 }));

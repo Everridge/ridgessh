@@ -29,6 +29,8 @@ const host = (alias: string, over: Partial<Host> = {}): Host => ({
   favorite: false,
   syncState: "synced",
   configDirty: false,
+  configSnapshot: null,
+  configSource: null,
   lastSeenInConfigAt: null,
   removedFromConfigAt: null,
   lastConnectedAt: null,

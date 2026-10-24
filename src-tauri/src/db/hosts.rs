@@ -22,6 +22,19 @@ pub struct HostField {
     pub value: String,
 }
 
+/// The connection part of a host: what maps to its `Host` block in ssh_config.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    pub alias: String,
+    pub hostname: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub identity_file: Option<String>,
+    pub proxy_jump: Option<String>,
+    pub extra_options: Vec<Directive>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Host {
@@ -40,6 +53,13 @@ pub struct Host {
     pub favorite: bool,
     pub sync_state: String,
     pub config_dirty: bool,
+    /// What ~/.ssh/config said at the last scan; `None` if the host is not in the config.
+    pub config_snapshot: Option<Connection>,
+    /// Included file the host comes from; `None` for the main config file.
+    pub config_source: Option<String>,
+    /// Hash of the config block at the last scan; internal to sync.
+    #[serde(skip)]
+    pub config_fingerprint: Option<String>,
     pub last_seen_in_config_at: Option<String>,
     pub removed_from_config_at: Option<String>,
     pub last_connected_at: Option<String>,
@@ -73,7 +93,7 @@ pub struct HostInput {
 const COLUMNS: &str = "id, alias, hostname, user, port, identity_file, proxy_jump, extra_options,
     group_id, description, notes, color, favorite, sync_state, config_dirty,
     last_seen_in_config_at, removed_from_config_at, last_connected_at, deleted_at,
-    created_at, updated_at";
+    created_at, updated_at, config_snapshot, config_source, config_fingerprint";
 
 fn from_row(r: &Row) -> rusqlite::Result<Host> {
     let extra: String = r.get(7)?;
@@ -93,6 +113,11 @@ fn from_row(r: &Row) -> rusqlite::Result<Host> {
         favorite: r.get(12)?,
         sync_state: r.get(13)?,
         config_dirty: r.get(14)?,
+        config_snapshot: r
+            .get::<_, Option<String>>(21)?
+            .and_then(|s| serde_json::from_str(&s).ok()),
+        config_source: r.get(22)?,
+        config_fingerprint: r.get(23)?,
         last_seen_in_config_at: r.get(15)?,
         removed_from_config_at: r.get(16)?,
         last_connected_at: r.get(17)?,
@@ -306,14 +331,32 @@ pub fn create(tx: &Transaction, mut input: HostInput, source: Source) -> AppResu
     Ok(host)
 }
 
-fn connection_changed(h: &Host, i: &HostInput) -> bool {
-    h.alias != i.alias
-        || h.hostname != i.hostname
-        || h.user != i.user
-        || h.port != i.port
-        || h.identity_file != i.identity_file
-        || h.proxy_jump != i.proxy_jump
-        || h.extra_options != i.extra_options
+impl Host {
+    pub fn connection(&self) -> Connection {
+        Connection {
+            alias: self.alias.clone(),
+            hostname: self.hostname.clone(),
+            user: self.user.clone(),
+            port: self.port,
+            identity_file: self.identity_file.clone(),
+            proxy_jump: self.proxy_jump.clone(),
+            extra_options: self.extra_options.clone(),
+        }
+    }
+}
+
+impl HostInput {
+    pub fn connection(&self) -> Connection {
+        Connection {
+            alias: self.alias.clone(),
+            hostname: self.hostname.clone(),
+            user: self.user.clone(),
+            port: self.port,
+            identity_file: self.identity_file.clone(),
+            proxy_jump: self.proxy_jump.clone(),
+            extra_options: self.extra_options.clone(),
+        }
+    }
 }
 
 pub fn update(tx: &Transaction, id: &str, mut input: HostInput, source: Source) -> AppResult<Host> {
@@ -324,9 +367,12 @@ pub fn update(tx: &Transaction, id: &str, mut input: HostInput, source: Source) 
             "restore the host from trash before editing it".into(),
         ));
     }
-    // Only hosts that exist in ~/.ssh/config can have pending config edits.
-    let dirty = before.config_dirty
-        || (before.sync_state != "db_only" && connection_changed(&before, &input));
+    // Pending config edits = the DB connection differs from what the config says. Hosts that
+    // are not in the config have nothing to be pending against.
+    let dirty = before
+        .config_snapshot
+        .as_ref()
+        .is_some_and(|s| *s != input.connection());
     tx.execute(
         "UPDATE hosts SET alias = ?2, hostname = ?3, user = ?4, port = ?5, identity_file = ?6,
             proxy_jump = ?7, extra_options = ?8, group_id = ?9, description = ?10, notes = ?11,
@@ -556,19 +602,24 @@ mod tests {
     }
 
     #[test]
-    fn db_only_hosts_never_become_config_dirty() {
+    fn config_dirty_tracks_difference_from_snapshot() {
         let db = Db::open_in_memory().unwrap();
         db.tx(|tx| {
             let h = create(tx, input("a"), Source::User)?;
             let mut i = input("a");
             i.port = Some(2222);
             assert!(!update(tx, &h.id, i.clone(), Source::User)?.config_dirty);
+            // Pretend the config contains the host as it is now.
+            let snapshot = serde_json::to_string(&get(tx, &h.id)?.connection())?;
             tx.execute(
-                "UPDATE hosts SET sync_state = 'synced' WHERE id = ?1",
-                [&h.id],
+                "UPDATE hosts SET sync_state = 'synced', config_snapshot = ?2 WHERE id = ?1",
+                params![h.id, snapshot],
             )?;
             i.port = Some(2223);
-            assert!(update(tx, &h.id, i, Source::User)?.config_dirty);
+            assert!(update(tx, &h.id, i.clone(), Source::User)?.config_dirty);
+            // Editing back to the config's value clears the pending flag.
+            i.port = Some(2222);
+            assert!(!update(tx, &h.id, i, Source::User)?.config_dirty);
             Ok(())
         })
         .unwrap();

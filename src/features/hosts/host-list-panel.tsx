@@ -281,7 +281,7 @@ function EmptyState({ view, searching }: { view: HostView; searching: boolean })
     return <Empty icon={SearchXIcon} title="No matches" text="No hosts match your search." />;
   }
   const text: Record<HostView, string> = {
-    all: "Add a host, or they will be imported from your SSH config on startup (coming in M2).",
+    all: "Add a host, or add Host entries to ~/.ssh/config and rescan.",
     favorites: "Star a host to pin it here.",
     recent: "Hosts you connect to will show up here.",
     removed: "Hosts that disappear from ~/.ssh/config are listed here.",

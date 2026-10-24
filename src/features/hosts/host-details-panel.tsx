@@ -19,6 +19,8 @@ import { useHostActions, usePurgeConfirm } from "./host-actions";
 import { SyncBadges } from "./host-badges";
 import { useGroupsData, useHostsData, useSetFavorite } from "./queries";
 
+const NEEDS_REVIEW = new Set(["conflict", "config_only_new", "removed_from_config"]);
+
 export function HostDetailsPanel() {
   const selectedId = useUiStore((s) => s.selectedHostId);
   const host = useHostsData().find((h) => h.id === selectedId);
@@ -42,6 +44,7 @@ export function HostDetailsPanel() {
 function Details({ host }: { host: Host }) {
   const groups = useGroupsData();
   const openHostForm = useUiStore((s) => s.openHostForm);
+  const openReview = useUiStore((s) => s.setSyncReviewOpen);
   const fav = useSetFavorite();
   const actions = useHostActions();
   const purge = usePurgeConfirm();
@@ -109,6 +112,16 @@ function Details({ host }: { host: Host }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <code className="text-sm">{connectionLabel(host)}</code>
                   <SyncBadges host={host} />
+                  {NEEDS_REVIEW.has(host.syncState) && (
+                    <Button
+                      variant="link"
+                      size="xs"
+                      className="h-auto p-0"
+                      onClick={() => openReview(true)}
+                    >
+                      Review
+                    </Button>
+                  )}
                 </div>
                 {host.description && <p className="text-sm">{host.description}</p>}
                 {host.tags.length > 0 && (
@@ -156,6 +169,18 @@ function Details({ host }: { host: Host }) {
                 <Row label="Group" mono={false}>
                   {groupPath(groups, host.groupId) || null}
                 </Row>
+                <Row label="SSH config" mono={false}>
+                  {host.configSnapshot
+                    ? host.configSource
+                      ? `In included file `
+                      : "In ~/.ssh/config"
+                    : "Not in the config"}
+                </Row>
+                {host.lastSeenInConfigAt && (
+                  <Row label="Last seen in config" mono={false}>
+                    {formatTs(host.lastSeenInConfigAt)}
+                  </Row>
+                )}
                 <Row label="Created" mono={false}>
                   {formatTs(host.createdAt)}
                 </Row>

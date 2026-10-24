@@ -13,6 +13,8 @@ mod sync;
 mod terminal;
 mod transfer;
 
+use std::sync::Mutex;
+
 use tauri::Manager;
 
 use crate::db::Db;
@@ -22,6 +24,7 @@ use crate::paths::AppPaths;
 pub struct AppState {
     pub paths: AppPaths,
     pub db: Db,
+    pub last_sync: Mutex<Option<sync::SyncReport>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -55,7 +58,11 @@ pub fn run() {
             let paths = AppPaths::resolve(app.handle())?;
             tracing::info!(data_dir = %paths.data_dir.display(), "starting RidgeSSH");
             let db = Db::open(&paths.db_file)?;
-            app.manage(AppState { paths, db });
+            app.manage(AppState {
+                paths,
+                db,
+                last_sync: Mutex::new(None),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -76,6 +83,13 @@ pub fn run() {
             commands::groups::group_delete,
             commands::tags::tags_list,
             commands::tags::tag_delete,
+            commands::sync::sync_run,
+            commands::sync::sync_last,
+            commands::sync::sync_rename_suggestions,
+            commands::sync::sync_acknowledge,
+            commands::sync::sync_keep_db_only,
+            commands::sync::sync_resolve_conflict,
+            commands::sync::sync_accept_rename,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

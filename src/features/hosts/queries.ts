@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, errorMessage, type GroupInput, type HostInput } from "@/lib/ipc";
 
@@ -7,7 +7,16 @@ export const keys = {
   groups: ["groups"] as const,
   tags: ["tags"] as const,
   hostHistory: (id: string) => ["host-history", id] as const,
+  lastSync: ["sync-last"] as const,
+  renames: ["sync-renames"] as const,
 };
+
+/** Refreshes everything derived from hosts after any change. */
+export function invalidateAll(qc: QueryClient) {
+  for (const queryKey of [keys.hosts, keys.groups, keys.tags, keys.renames, ["host-history"]]) {
+    void qc.invalidateQueries({ queryKey });
+  }
+}
 
 // Stable fallback so `data ?? EMPTY` does not change identity on every render.
 const EMPTY: never[] = [];
@@ -23,7 +32,7 @@ export const useHostHistory = (id: string) =>
   useQuery({ queryKey: keys.hostHistory(id), queryFn: () => api.hostHistory(id) });
 
 /** Mutation that refreshes all host-related data and toasts errors. */
-function useDataMutation<V, R>(fn: (v: V) => Promise<R>, success?: (r: R, v: V) => string) {
+export function useDataMutation<V, R>(fn: (v: V) => Promise<R>, success?: (r: R, v: V) => string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
@@ -32,12 +41,7 @@ function useDataMutation<V, R>(fn: (v: V) => Promise<R>, success?: (r: R, v: V) 
       if (msg) toast.success(msg);
     },
     onError: (e) => toast.error(errorMessage(e)),
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: keys.hosts });
-      void qc.invalidateQueries({ queryKey: keys.groups });
-      void qc.invalidateQueries({ queryKey: keys.tags });
-      void qc.invalidateQueries({ queryKey: ["host-history"] });
-    },
+    onSettled: () => invalidateAll(qc),
   });
 }
 

@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { clearMocks } from "@tauri-apps/api/mocks";
+import { toast } from "sonner";
 import { afterEach, vi } from "vitest";
 
 vi.mock("@/components/ui/resizable", () => import("./resizable-stub"));
@@ -28,8 +29,11 @@ window.matchMedia ??= (query: string) =>
 Element.prototype.scrollIntoView ??= () => {};
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.releasePointerCapture ??= () => {};
+Element.prototype.setPointerCapture ??= () => {};
 
 afterEach(() => {
+  // sonner keeps toasts in a module-level store that would leak into the next test.
+  toast.dismiss();
   cleanup();
   clearMocks();
 });
