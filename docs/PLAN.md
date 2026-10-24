@@ -184,6 +184,8 @@ then encrypted with `age` passphrase mode.
 
 **Restore**: pick a backup → enter password → preview (what changes: hosts, groups, config diff) → choose DB only / config only / both → config part still requires the confirmation word.
 
+**As built (M5)**: the backup folder is the list of backups. File names carry time, manual/auto and reason (`ridgessh-<UTC>-auto-config-write.rsbak`), and there is no `backups` table, because it would go stale whenever an older database is restored. Plain copies of replaced configs go to `<app data>/config-history`, never to the (possibly cloud-synced) backup folder. Key files are not included yet.
+
 ## 10. Export / import
 
 - Same encrypted `age` format, file extension `.rsexport`, with its own password (asked each time, not stored).

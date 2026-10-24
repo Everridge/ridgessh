@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::AppState;
+use crate::backup::Reason;
 use crate::config_write::{self, ApplyRequest, ApplyResult, Candidate, Change, Preview};
 use crate::error::{AppError, AppResult};
 
@@ -21,28 +22,29 @@ pub fn config_preview(state: State<'_, AppState>, changes: Vec<Change>) -> AppRe
 }
 
 /// Writes the previewed changes. Refuses unless the confirmation word matches and neither the
-/// file nor the pending changes moved since the preview.
+/// file nor the pending changes moved since the preview. An encrypted backup is made between
+/// the checks and the write.
 #[tauri::command]
-pub fn config_apply(
+pub async fn config_apply(
     state: State<'_, AppState>,
     changes: Vec<Change>,
     base_hash: String,
     result_hash: String,
     confirmation: String,
 ) -> AppResult<ApplyResult> {
-    let result = state.db.tx(|tx| {
-        config_write::apply(
-            tx,
-            &state.paths,
-            &state.paths.ssh_config,
-            ApplyRequest {
-                changes: &changes,
-                base_hash: &base_hash,
-                result_hash: &result_hash,
-                confirmation: &confirmation,
-            },
-        )
-    })?;
+    let req = ApplyRequest {
+        changes: &changes,
+        base_hash: &base_hash,
+        result_hash: &result_hash,
+        confirmation: &confirmation,
+    };
+    let config = &state.paths.ssh_config;
+    state.db.tx(|tx| config_write::check(tx, config, &req))?;
+    let auto_backup = state.auto_backup(Reason::ConfigWrite)?;
+    let mut result = state
+        .db
+        .tx(|tx| config_write::apply(tx, &state.paths, config, req))?;
+    result.auto_backup = auto_backup;
     *state
         .last_sync
         .lock()

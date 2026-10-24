@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::AppState;
+use crate::backup::Reason;
 use crate::db::hosts::{self, Host, HostInput};
 use crate::error::AppResult;
 use crate::history::{self, AuditEntry, EntityType, Source};
@@ -16,47 +17,66 @@ pub fn host_get(state: State<'_, AppState>, id: String) -> AppResult<Host> {
 }
 
 #[tauri::command]
-pub fn host_create(state: State<'_, AppState>, input: HostInput) -> AppResult<Host> {
+pub async fn host_create(state: State<'_, AppState>, input: HostInput) -> AppResult<Host> {
+    state.auto_backup(Reason::Periodic)?;
     state.db.tx(|tx| hosts::create(tx, input, Source::User))
 }
 
 #[tauri::command]
-pub fn host_update(state: State<'_, AppState>, id: String, input: HostInput) -> AppResult<Host> {
+pub async fn host_update(
+    state: State<'_, AppState>,
+    id: String,
+    input: HostInput,
+) -> AppResult<Host> {
+    state.auto_backup(Reason::Periodic)?;
     state
         .db
         .tx(|tx| hosts::update(tx, &id, input, Source::User))
 }
 
 #[tauri::command]
-pub fn host_set_favorite(state: State<'_, AppState>, id: String, favorite: bool) -> AppResult<()> {
+pub async fn host_set_favorite(
+    state: State<'_, AppState>,
+    id: String,
+    favorite: bool,
+) -> AppResult<()> {
+    state.auto_backup(Reason::Periodic)?;
     state
         .db
         .tx(|tx| hosts::patch_meta(tx, &[id], Some(favorite), None, Source::User))
 }
 
 #[tauri::command]
-pub fn hosts_move(
+pub async fn hosts_move(
     state: State<'_, AppState>,
     ids: Vec<String>,
     group_id: Option<String>,
 ) -> AppResult<()> {
+    state.auto_backup(Reason::Periodic)?;
     state
         .db
         .tx(|tx| hosts::patch_meta(tx, &ids, None, Some(group_id), Source::User))
 }
 
 #[tauri::command]
-pub fn hosts_delete(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<()> {
+pub async fn hosts_delete(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<()> {
+    state.auto_backup(if ids.len() > 1 {
+        Reason::BulkDelete
+    } else {
+        Reason::Periodic
+    })?;
     state.db.tx(|tx| hosts::soft_delete(tx, &ids, Source::User))
 }
 
 #[tauri::command]
-pub fn host_restore(state: State<'_, AppState>, id: String) -> AppResult<Host> {
+pub async fn host_restore(state: State<'_, AppState>, id: String) -> AppResult<Host> {
+    state.auto_backup(Reason::Periodic)?;
     state.db.tx(|tx| hosts::restore(tx, &id, Source::User))
 }
 
 #[tauri::command]
-pub fn host_purge(state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub async fn host_purge(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.auto_backup(Reason::BulkDelete)?;
     state.db.tx(|tx| hosts::purge(tx, &id, Source::User))
 }
 

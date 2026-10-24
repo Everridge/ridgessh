@@ -5,7 +5,10 @@ import { TopBar } from "@/components/layout/top-bar";
 import { HostDetailsPanel } from "@/features/hosts/host-details-panel";
 import { HostListPanel } from "@/features/hosts/host-list-panel";
 import { HostFormDialog } from "@/features/hosts/host-form-dialog";
+import { BackupsDialog } from "@/features/backup/backups-dialog";
+import { RestoreDialog } from "@/features/backup/restore-dialog";
 import { ConfigWriteDialog } from "@/features/config-write/config-write-dialog";
+import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { SyncReviewDialog } from "@/features/sync/sync-review-dialog";
 import { useStartupSync } from "@/features/sync/use-startup-sync";
 import { QuickConnect } from "@/features/terminal/quick-connect";
@@ -64,6 +67,9 @@ export default function App() {
       <HostFormDialog />
       <SyncReviewDialog />
       <ConfigWriteDialog />
+      <BackupsDialog />
+      <RestoreDialog />
+      <SettingsDialog />
       <QuickConnect />
     </SidebarProvider>
   );

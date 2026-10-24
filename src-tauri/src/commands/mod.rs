@@ -1,6 +1,7 @@
 //! `#[tauri::command]` handlers — thin wrappers that delegate to domain modules.
 
 pub mod app;
+pub mod backup;
 pub mod config;
 pub mod groups;
 pub mod hosts;

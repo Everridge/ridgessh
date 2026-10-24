@@ -17,6 +17,7 @@ static MIGRATIONS: LazyLock<Migrations<'static>> = LazyLock::new(|| {
     Migrations::new(vec![
         M::up(include_str!("migrations/001_init.sql")),
         M::up(include_str!("migrations/002_config_tracking.sql")),
+        M::up(include_str!("migrations/003_drop_backups_table.sql")),
     ])
 });
 
@@ -45,6 +46,45 @@ impl Db {
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Runs `f` in a transaction that is always rolled back (to ask "would this change
+    /// anything?").
+    pub fn dry_run<T>(&self, f: impl FnOnce(&Transaction) -> AppResult<T>) -> AppResult<T> {
+        let _guard = TxGuard::enter()?;
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        f(&tx)
+        // dropping `tx` rolls back
+    }
+
+    /// Writes a consistent copy of the whole database to `path` (which must not exist).
+    pub fn snapshot_to(&self, path: &Path) -> AppResult<()> {
+        let _guard = TxGuard::enter()?;
+        let conn = self.lock()?;
+        conn.execute("VACUUM INTO ?1", [path.to_string_lossy()])?;
+        Ok(())
+    }
+
+    /// Replaces the live database with the one in `path`, after migrating that copy to the
+    /// current schema. Uses SQLite's online backup, so the connection stays valid.
+    pub fn restore_from(&self, path: &Path) -> AppResult<()> {
+        let mut src = Connection::open(path)?;
+        src.pragma_update(None, "foreign_keys", "ON")?;
+        MIGRATIONS
+            .to_latest(&mut src)
+            .map_err(|e| AppError::Other(format!("cannot migrate the backup database: {e}")))?;
+        let _guard = TxGuard::enter()?;
+        let mut conn = self.lock()?;
+        let backup = rusqlite::backup::Backup::new(&src, &mut conn)?;
+        backup.run_to_completion(256, std::time::Duration::ZERO, None)?;
+        Ok(())
+    }
+
+    fn lock(&self) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
+        self.conn
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))
     }
 
     /// Runs `f` inside a transaction; commits on `Ok`, rolls back on `Err`.

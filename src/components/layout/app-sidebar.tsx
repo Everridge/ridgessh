@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/sidebar";
 import { GroupDialog, type GroupDialogTarget } from "@/features/groups/group-dialog";
 import { buildGroupTree, countByGroup, type GroupNode } from "@/features/hosts/filter";
+import { useBackupStatus } from "@/features/backup/queries";
 import { useDeleteGroup, useGroupsData, useHostsData } from "@/features/hosts/queries";
 import type { Group, Host } from "@/lib/ipc";
 import { useUiStore, type HostView } from "@/stores/ui";
@@ -75,6 +76,16 @@ export function AppSidebar() {
   const [dialog, setDialog] = useState<GroupDialogTarget | null>(null);
   const [deleting, setDeleting] = useState<Group | null>(null);
   const deleteGroup = useDeleteGroup();
+  const setBackupsOpen = useUiStore((s) => s.setBackupsOpen);
+  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
+  const backup = useBackupStatus().data;
+  const backupWarning = !backup
+    ? null
+    : backup.lastError
+      ? "The last automatic backup failed"
+      : !backup.passwordRemembered
+        ? "Automatic backups are off: no backup password"
+        : null;
 
   const tree = useMemo(() => buildGroupTree(groups), [groups]);
   const counts = useMemo(() => countByGroup(hosts, groups), [hosts, groups]);
@@ -158,13 +169,20 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip="Backups" disabled>
+            <SidebarMenuButton tooltip="Backups" onClick={() => setBackupsOpen(true)}>
               <ArchiveRestoreIcon />
               <span>Backups</span>
+              {backupWarning && (
+                <span
+                  className="ml-auto size-2 rounded-full bg-amber-500"
+                  aria-label={backupWarning}
+                  title={backupWarning}
+                />
+              )}
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip="Settings" disabled>
+            <SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>
               <SettingsIcon />
               <span>Settings</span>
             </SidebarMenuButton>

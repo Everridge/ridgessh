@@ -28,6 +28,45 @@ pub struct AppState {
     pub db: Db,
     pub last_sync: Mutex<Option<sync::SyncReport>>,
     pub terminals: Arc<TerminalManager>,
+    /// Where the backup password is remembered.
+    pub secrets: Box<dyn backup::SecretStore>,
+    /// Why the last automatic backup failed (cleared by the next success).
+    pub backup_error: Mutex<Option<String>>,
+}
+
+impl AppState {
+    pub fn backup_ctx(&self) -> backup::Ctx<'_> {
+        backup::Ctx::new(&self.db, &self.paths, self.secrets.as_ref())
+    }
+
+    /// Automatic backup before a change (see [`backup::auto`]). A failure blocks only strict
+    /// reasons; it is remembered either way so the UI can show it.
+    pub fn auto_backup(
+        &self,
+        reason: backup::Reason,
+    ) -> error::AppResult<Option<backup::BackupInfo>> {
+        let result = backup::auto::before_change(&self.backup_ctx(), reason);
+        let mut last = self.backup_error.lock().unwrap_or_else(|e| e.into_inner());
+        match result {
+            Ok(info) => {
+                if info.is_some() {
+                    *last = None;
+                }
+                Ok(info)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, reason = reason.slug(), "automatic backup failed");
+                *last = Some(e.to_string());
+                if reason.strict() {
+                    Err(error::AppError::Other(format!(
+                        "The automatic backup failed, so nothing was changed: {e}. Check the backup folder in Settings, or turn automatic backups off."
+                    )))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,6 +110,8 @@ pub fn run() {
                 db,
                 last_sync: Mutex::new(None),
                 terminals: Arc::new(TerminalManager::default()),
+                secrets: Box::new(backup::password::KeyringStore),
+                backup_error: Mutex::new(None),
             });
             Ok(())
         })
@@ -102,6 +143,16 @@ pub fn run() {
             commands::config::config_candidates,
             commands::config::config_preview,
             commands::config::config_apply,
+            commands::backup::settings_get,
+            commands::backup::settings_update,
+            commands::backup::backup_status,
+            commands::backup::backup_password_remember,
+            commands::backup::backup_password_forget,
+            commands::backup::backups_list,
+            commands::backup::backup_create,
+            commands::backup::backup_delete,
+            commands::backup::backup_inspect,
+            commands::backup::backup_restore,
             commands::terminal::terminal_open,
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,

@@ -75,7 +75,11 @@ function Body({ focus, onDone }: { focus: string[] | null; onDone: () => void })
         onSuccess: (r) => {
           toast.success(
             `Wrote ${r.changed} change${r.changed === 1 ? "" : "s"} to ${r.configPath}`,
-            { description: r.backupPath ? `Previous version saved as ${r.backupPath}` : undefined },
+            {
+              description: r.autoBackup
+                ? `Backup made first: ${r.autoBackup.fileName}`
+                : "No automatic backup was made (set a backup password in Settings).",
+            },
           );
           onDone();
         },

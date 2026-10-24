@@ -17,7 +17,6 @@ pub enum Source {
     Sync,
     #[allow(dead_code)] // M8
     Import,
-    #[allow(dead_code)] // M5/M6
     Restore,
 }
 
@@ -27,6 +26,8 @@ pub enum EntityType {
     Host,
     Group,
     Tag,
+    Settings,
+    Backup,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

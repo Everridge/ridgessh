@@ -6,6 +6,10 @@ interface UiState {
   view: HostView;
   /** Selected group when `view === "group"`. */
   groupId: string | null;
+  settingsOpen: boolean;
+  backupsOpen: boolean;
+  /** Backup file being restored (from the list or picked from disk). */
+  restoreTarget: { path: string; name: string } | null;
   search: string;
   selectedHostId: string | null;
   /** Hosts ticked for bulk actions. */
@@ -29,6 +33,9 @@ interface UiState {
   setQuickConnectOpen: (open: boolean) => void;
   openConfigWrite: (focus?: string[]) => void;
   closeConfigWrite: () => void;
+  setSettingsOpen: (open: boolean) => void;
+  setBackupsOpen: (open: boolean) => void;
+  setRestoreTarget: (target: { path: string; name: string } | null) => void;
 }
 
 /** Pure UI state. Backend data lives in TanStack Query, not here. */
@@ -42,6 +49,9 @@ export const useUiStore = create<UiState>((set) => ({
   syncReviewOpen: false,
   quickConnectOpen: false,
   configWrite: null,
+  settingsOpen: false,
+  backupsOpen: false,
+  restoreTarget: null,
   setView: (view) => set({ view, groupId: null, selectedHostId: null, checkedIds: [] }),
   setGroup: (groupId) => set({ view: "group", groupId, selectedHostId: null, checkedIds: [] }),
   setSearch: (search) => set({ search }),
@@ -59,4 +69,7 @@ export const useUiStore = create<UiState>((set) => ({
   setQuickConnectOpen: (quickConnectOpen) => set({ quickConnectOpen }),
   openConfigWrite: (focus) => set({ configWrite: { focus: focus ?? null } }),
   closeConfigWrite: () => set({ configWrite: null }),
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setBackupsOpen: (backupsOpen) => set({ backupsOpen }),
+  setRestoreTarget: (restoreTarget) => set({ restoreTarget }),
 }));

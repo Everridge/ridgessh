@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::AppState;
+use crate::backup::Reason;
 use crate::db::hosts::Host;
 use crate::error::{AppError, AppResult};
 use crate::ssh_config;
@@ -8,9 +9,17 @@ use crate::sync::{self, Keep, RenameSuggestion, SyncReport};
 
 /// Scans ~/.ssh/config (and its includes) and reconciles the database. Never writes the config.
 #[tauri::command]
-pub fn sync_run(state: State<'_, AppState>) -> AppResult<SyncReport> {
+pub async fn sync_run(state: State<'_, AppState>) -> AppResult<SyncReport> {
     let path = &state.paths.ssh_config;
     let parsed = ssh_config::load(path)?;
+    // Back up first if the scan is going to change anything.
+    if state
+        .db
+        .dry_run(|tx| sync::run(tx, &parsed, path))?
+        .changed()
+    {
+        state.auto_backup(Reason::Sync)?;
+    }
     let report = state.db.tx(|tx| sync::run(tx, &parsed, path))?;
     tracing::info!(
         added = report.added.len(),
@@ -42,29 +51,33 @@ pub fn sync_rename_suggestions(state: State<'_, AppState>) -> AppResult<Vec<Rena
 }
 
 #[tauri::command]
-pub fn sync_acknowledge(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<()> {
+pub async fn sync_acknowledge(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<()> {
+    state.auto_backup(Reason::Periodic)?;
     state.db.tx(|tx| sync::acknowledge(tx, &ids))
 }
 
 #[tauri::command]
-pub fn sync_keep_db_only(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<()> {
+pub async fn sync_keep_db_only(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<()> {
+    state.auto_backup(Reason::Periodic)?;
     state.db.tx(|tx| sync::keep_db_only(tx, &ids))
 }
 
 #[tauri::command]
-pub fn sync_resolve_conflict(
+pub async fn sync_resolve_conflict(
     state: State<'_, AppState>,
     id: String,
     keep: Keep,
 ) -> AppResult<Host> {
+    state.auto_backup(Reason::Periodic)?;
     state.db.tx(|tx| sync::resolve_conflict(tx, &id, keep))
 }
 
 #[tauri::command]
-pub fn sync_accept_rename(
+pub async fn sync_accept_rename(
     state: State<'_, AppState>,
     from_id: String,
     to_id: String,
 ) -> AppResult<Host> {
+    state.auto_backup(Reason::Periodic)?;
     state.db.tx(|tx| sync::accept_rename(tx, &from_id, &to_id))
 }

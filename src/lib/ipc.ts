@@ -208,8 +208,83 @@ export interface ConfigPreview {
 
 export interface ConfigApplyResult {
   configPath: string;
-  backupPath: string | null;
+  /** Plain copy of the previous file (in the app data folder). */
+  previousCopy: string | null;
+  /** Encrypted automatic backup made just before writing. */
+  autoBackup: BackupInfo | null;
   changed: number;
+  report: SyncReport;
+}
+
+export interface Settings {
+  /** null = default folder under the app data dir. */
+  backupDir: string | null;
+  confirmationWord: string;
+  autoBackup: boolean;
+  /** Ordinary edits back up at most once per this many minutes (0 = never). */
+  autoBackupIntervalMin: number;
+  retentionCount: number;
+  /** 0 = no age limit. */
+  retentionDays: number;
+}
+
+export interface SettingsView {
+  settings: Settings;
+  backupDir: string;
+  defaultBackupDir: string;
+}
+
+export interface BackupInfo {
+  fileName: string;
+  path: string;
+  createdAt: string;
+  /** manual, config-write, before-restore, bulk-delete, sync, periodic, import or unknown. */
+  reason: string;
+  manual: boolean;
+  size: number;
+}
+
+export interface BackupStatus {
+  passwordRemembered: boolean;
+  autoBackup: boolean;
+  backupDir: string;
+  lastBackup: BackupInfo | null;
+  lastError: string | null;
+}
+
+export interface BackupManifest {
+  format: number;
+  appVersion: string;
+  createdAt: string;
+  reason: string;
+  manual: boolean;
+  hostCount: number;
+  groupCount: number;
+  configPath: string;
+  files: { name: string; sha256: string; size: number; originalPath: string | null }[];
+}
+
+export interface BackupInspection {
+  path: string;
+  manifest: BackupManifest;
+  hosts: { total: number; added: string[]; removed: string[]; changed: string[] };
+  config: { diff: DiffLine[]; additions: number; deletions: number; baseHash: string } | null;
+  configPath: string;
+  confirmationWord: string;
+}
+
+export interface RestoreOptions {
+  restoreDb: boolean;
+  restoreConfig: boolean;
+  configBaseHash: string | null;
+  confirmation: string | null;
+}
+
+export interface RestoreResult {
+  restoredDb: boolean;
+  restoredConfig: boolean;
+  safetyBackup: BackupInfo;
+  previousConfig: string | null;
   report: SyncReport;
 }
 
@@ -265,6 +340,22 @@ export const api = {
     resultHash: string,
     confirmation: string,
   ) => invoke<ConfigApplyResult>("config_apply", { changes, baseHash, resultHash, confirmation }),
+
+  settingsGet: () => invoke<SettingsView>("settings_get"),
+  settingsUpdate: (settings: Settings) => invoke<SettingsView>("settings_update", { settings }),
+
+  backupStatus: () => invoke<BackupStatus>("backup_status"),
+  backupPasswordRemember: (password: string) =>
+    invoke<void>("backup_password_remember", { password }),
+  backupPasswordForget: () => invoke<void>("backup_password_forget"),
+  backupsList: () => invoke<BackupInfo[]>("backups_list"),
+  /** Without a password the remembered one is used. */
+  backupCreate: (password?: string) => invoke<BackupInfo>("backup_create", { password }),
+  backupDelete: (fileName: string) => invoke<void>("backup_delete", { fileName }),
+  backupInspect: (path: string, password: string) =>
+    invoke<BackupInspection>("backup_inspect", { path, password }),
+  backupRestore: (path: string, password: string, options: RestoreOptions) =>
+    invoke<RestoreResult>("backup_restore", { path, password, options }),
 
   terminalOpen: (
     hostId: string,

@@ -4,12 +4,18 @@ import type {
   AuditEntry,
   ConfigCandidate,
   ConfigChange,
+  BackupInfo,
+  BackupInspection,
+  BackupStatus,
   ConfigPreview,
   Group,
   GroupInput,
   Host,
   HostInput,
   RenameSuggestion,
+  RestoreOptions,
+  Settings,
+  SettingsView,
   SyncReport,
 } from "@/lib/ipc";
 
@@ -23,6 +29,10 @@ export interface FakeSeed {
   /** What the startup `sync_run` reports (host states are taken from `hosts` as seeded). */
   report?: Partial<SyncReport>;
   renames?: RenameSuggestion[];
+  settings?: Partial<Settings>;
+  rememberedPassword?: string;
+  /** Existing backup files and the password each was made with. */
+  backups?: { fileName: string; password: string }[];
 }
 
 export function installFakeBackend(seed: FakeSeed = {}) {
@@ -35,6 +45,28 @@ export function installFakeBackend(seed: FakeSeed = {}) {
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let renames = [...(seed.renames ?? [])];
   let lastSync: SyncReport | null = null;
+  let settings: Settings = {
+    backupDir: null,
+    confirmationWord: "CONFIRM",
+    autoBackup: true,
+    autoBackupIntervalMin: 30,
+    retentionCount: 30,
+    retentionDays: 0,
+    ...seed.settings,
+  };
+  let remembered: string | null = seed.rememberedPassword ?? null;
+  let backups: BackupInfo[] = [];
+  const backupPasswords = new Map<string, string>();
+  for (const b of seed.backups ?? []) {
+    const info = fakeBackup(b.fileName, true);
+    backups.push(info);
+    backupPasswords.set(info.path, b.password);
+  }
+  const settingsView = (): SettingsView => ({
+    settings,
+    backupDir: settings.backupDir ?? "C:\\data\\backups",
+    defaultBackupDir: "C:\\data\\backups",
+  });
 
   const log = (entityId: string, action: AuditEntry["action"], before: unknown, after: unknown) =>
     audit.unshift({
@@ -167,6 +199,80 @@ export function installFakeBackend(seed: FakeSeed = {}) {
         return lastSync;
       case "sync_last":
         return lastSync;
+      case "settings_get":
+        return settingsView();
+      case "settings_update":
+        settings = args.settings as Settings;
+        return settingsView();
+      case "backup_status":
+        return {
+          passwordRemembered: remembered !== null,
+          autoBackup: settings.autoBackup,
+          backupDir: settings.backupDir ?? "C:\\data\\backups",
+          lastBackup: backups[0] ?? null,
+          lastError: null,
+        } satisfies BackupStatus;
+      case "backup_password_remember":
+        remembered = args.password as string;
+        return null;
+      case "backup_password_forget":
+        remembered = null;
+        return null;
+      case "backups_list":
+        return [...backups];
+      case "backup_create": {
+        const password = (args.password as string | undefined) ?? remembered;
+        if (!password) throw { kind: "validation", message: "enter a backup password" };
+        const b = fakeBackup(`ridgessh-${++seq}-manual.rsbak`, true);
+        backupPasswords.set(b.path, password);
+        backups.unshift(b);
+        return b;
+      }
+      case "backup_delete":
+        backups = backups.filter((b) => b.fileName !== args.fileName);
+        return null;
+      case "backup_inspect": {
+        const path = args.path as string;
+        if (backupPasswords.get(path) !== args.password)
+          throw { kind: "validation", message: "wrong password for this backup" };
+        return {
+          path,
+          manifest: {
+            format: 1,
+            appVersion: "0.1.0",
+            createdAt: "2026-10-20T08:00:00.000Z",
+            reason: "manual",
+            manual: true,
+            hostCount: 1,
+            groupCount: 0,
+            configPath: "C:\\Users\\me\\.ssh\\config",
+            files: [],
+          },
+          hosts: { total: 1, added: ["old-box"], removed: hosts.map((h) => h.alias), changed: [] },
+          config: {
+            diff: [{ kind: "add", text: "Host old-box", old: null, new: 1 }],
+            additions: 1,
+            deletions: 0,
+            baseHash: "cfg-hash",
+          },
+          configPath: "C:\\Users\\me\\.ssh\\config",
+          confirmationWord: settings.confirmationWord,
+        } satisfies BackupInspection;
+      }
+      case "backup_restore": {
+        const o = args.options as RestoreOptions;
+        if (o.restoreConfig && o.confirmation !== settings.confirmationWord)
+          throw { kind: "validation", message: "the confirmation word does not match" };
+        const safety = fakeBackup(`ridgessh-${++seq}-auto-before-restore.rsbak`, false);
+        backups.unshift(safety);
+        return {
+          restoredDb: o.restoreDb,
+          restoredConfig: o.restoreConfig,
+          safetyBackup: safety,
+          previousConfig: null,
+          report: lastSync,
+        };
+      }
       case "config_candidates":
         return hosts.flatMap((h): ConfigCandidate[] => {
           const op = offeredOp(h);
@@ -223,7 +329,8 @@ export function installFakeBackend(seed: FakeSeed = {}) {
         }
         return {
           configPath: "C:\\Users\\me\\.ssh\\config",
-          backupPath: "C:\\data\\backups\\ssh-config\\config-1",
+          previousCopy: "C:\\data\\config-history\\config-1",
+          autoBackup: null,
           changed: changes.length,
           report: lastSync,
         };
@@ -293,5 +400,16 @@ export function makeHost(over: Partial<Host> = {}): Host {
     tags: [],
     fields: [],
     ...over,
+  };
+}
+
+function fakeBackup(fileName: string, manual: boolean): BackupInfo {
+  return {
+    fileName,
+    path: `C:\\data\\backups\\${fileName}`,
+    createdAt: "2026-10-20T08:00:00.000Z",
+    reason: manual ? "manual" : "before-restore",
+    manual,
+    size: 4096,
   };
 }

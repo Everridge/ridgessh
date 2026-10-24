@@ -12,6 +12,9 @@ export const keys = {
   renames: ["sync-renames"] as const,
   configCandidates: ["config-candidates"] as const,
   configPreview: ["config-preview"] as const,
+  settings: ["settings"] as const,
+  backupStatus: ["backup-status"] as const,
+  backups: ["backups"] as const,
 };
 
 /** Refreshes everything derived from hosts after any change. */
@@ -23,6 +26,9 @@ export function invalidateAll(qc: QueryClient) {
     keys.renames,
     keys.configCandidates,
     keys.configPreview,
+    // Edits can trigger automatic backups.
+    keys.backupStatus,
+    keys.backups,
     ["host-history"],
   ]) {
     void qc.invalidateQueries({ queryKey });

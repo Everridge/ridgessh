@@ -32,7 +32,7 @@ use crate::ssh_config::writer::{self, Edit};
 use crate::ssh_config::{self, ConfigFile};
 use crate::sync::{self, SyncReport};
 
-/// How many config backups to keep in `<backup dir>/ssh-config`.
+/// How many plain copies of replaced configs to keep in `<data dir>/config-history`.
 const KEEP_BACKUPS: usize = 50;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -94,7 +94,10 @@ pub struct Preview {
 #[serde(rename_all = "camelCase")]
 pub struct ApplyResult {
     pub config_path: String,
-    pub backup_path: Option<String>,
+    /// Plain copy of the file as it was before (in the app data folder).
+    pub previous_copy: Option<String>,
+    /// The encrypted automatic backup made just before, if any (set by the command).
+    pub auto_backup: Option<crate::backup::BackupInfo>,
     pub changed: usize,
     pub report: SyncReport,
 }
@@ -257,7 +260,7 @@ fn plan(tx: &Transaction, config_path: &Path, changes: &[Change]) -> AppResult<P
     })
 }
 
-fn diff_lines(old: &str, new: &str) -> (Vec<DiffLine>, usize, usize) {
+pub fn diff_lines(old: &str, new: &str) -> (Vec<DiffLine>, usize, usize) {
     let diff = TextDiff::from_lines(old, new);
     let (mut out, mut adds, mut dels) = (Vec::new(), 0, 0);
     for group in diff.grouped_ops(3) {
@@ -323,12 +326,13 @@ pub struct ApplyRequest<'a> {
     pub confirmation: &'a str,
 }
 
-pub fn apply(
-    tx: &Transaction,
-    paths: &AppPaths,
-    config_path: &Path,
-    req: ApplyRequest,
-) -> AppResult<ApplyResult> {
+/// Runs every check [`apply`] makes, without writing. The command calls it before taking the
+/// automatic backup, so a wrong word or stale preview doesn't create a backup.
+pub fn check(tx: &Transaction, config_path: &Path, req: &ApplyRequest) -> AppResult<()> {
+    checked_plan(tx, config_path, req).map(|_| ())
+}
+
+fn checked_plan(tx: &Transaction, config_path: &Path, req: &ApplyRequest) -> AppResult<Plan> {
     if req.confirmation != settings::confirmation_word(tx)? {
         return Err(AppError::Validation(
             "the confirmation word does not match".into(),
@@ -346,9 +350,18 @@ pub fn apply(
             "the changes differ from the preview. Review them again.".into(),
         ));
     }
+    Ok(p)
+}
 
-    let backup_path = match &p.current.bytes {
-        Some(bytes) => Some(backup(&settings::backup_dir(tx, paths)?, bytes)?),
+pub fn apply(
+    tx: &Transaction,
+    paths: &AppPaths,
+    config_path: &Path,
+    req: ApplyRequest,
+) -> AppResult<ApplyResult> {
+    let p = checked_plan(tx, config_path, &req)?;
+    let previous_copy = match &p.current.bytes {
+        Some(bytes) => Some(save_previous(&paths.data_dir, bytes)?),
         None => None,
     };
     atomic::replace_file(config_path, p.new_text.as_bytes())?;
@@ -356,15 +369,15 @@ pub fn apply(
         return Err(AppError::Other(format!(
             "{} reads back differently than written. The previous version is in {}",
             config_path.display(),
-            backup_path
+            previous_copy
                 .as_ref()
-                .map_or("(no backup)".into(), |b| b.display().to_string())
+                .map_or("(no copy)".into(), |b| b.display().to_string())
         )));
     }
     tracing::info!(
         path = %config_path.display(),
         changes = p.changes.len(),
-        backup = ?backup_path,
+        previous = ?previous_copy,
         "ssh config written"
     );
 
@@ -411,15 +424,17 @@ pub fn apply(
     let report = sync::run(tx, &ssh_config::load(config_path)?, config_path)?;
     Ok(ApplyResult {
         config_path: config_path.display().to_string(),
-        backup_path: backup_path.map(|b| b.display().to_string()),
+        previous_copy: previous_copy.map(|b| b.display().to_string()),
+        auto_backup: None,
         changed: p.changes.len(),
         report,
     })
 }
 
-/// Copies the current config into `<dir>/ssh-config/` and prunes old copies.
-fn backup(dir: &Path, bytes: &[u8]) -> AppResult<PathBuf> {
-    let dir = dir.join("ssh-config");
+/// Keeps a plain copy of a config about to be replaced in `<data dir>/config-history/` (local,
+/// like the database; the backup folder may be a cloud folder and only holds encrypted files).
+pub fn save_previous(data_dir: &Path, bytes: &[u8]) -> AppResult<PathBuf> {
+    let dir = data_dir.join("config-history");
     std::fs::create_dir_all(&dir)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f");
     let path = dir.join(format!("config-{stamp}"));

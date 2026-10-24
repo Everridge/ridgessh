@@ -153,7 +153,7 @@ fn edited_host_is_written_and_back_in_sync() {
     assert!(!env.scan().changed());
 
     // The previous file is in the backup folder.
-    let backup = fs::read_to_string(r.backup_path.unwrap()).unwrap();
+    let backup = fs::read_to_string(r.previous_copy.unwrap()).unwrap();
     assert_eq!(backup, CONFIG);
 }
 
@@ -315,7 +315,7 @@ fn creates_missing_config() {
     let p = env.preview(&[change(&h, Op::Add)]).unwrap();
     assert!(!p.file_exists);
     let r = env.write(&[change(&h, Op::Add)]);
-    assert!(r.backup_path.is_none());
+    assert!(r.previous_copy.is_none());
     assert_eq!(
         env.text(),
         "Host first\n    HostName example.com\n    IdentityFile \"C:\\Users\\me\\.ssh\\my key\"\n"
@@ -355,14 +355,16 @@ fn conflict_and_included_hosts_are_blocked() {
 }
 
 #[test]
-fn backups_are_pruned() {
+fn previous_copies_are_pruned() {
     let dir = tempfile::tempdir().unwrap();
     for i in 0..KEEP_BACKUPS + 3 {
-        let sub = dir.path().join("ssh-config");
+        let sub = dir.path().join("config-history");
         fs::create_dir_all(&sub).unwrap();
         fs::write(sub.join(format!("config-20200101-0000{i:02}.000")), "x").unwrap();
     }
-    backup(dir.path(), b"new").unwrap();
-    let n = fs::read_dir(dir.path().join("ssh-config")).unwrap().count();
+    save_previous(dir.path(), b"new").unwrap();
+    let n = fs::read_dir(dir.path().join("config-history"))
+        .unwrap()
+        .count();
     assert_eq!(n, KEEP_BACKUPS);
 }
