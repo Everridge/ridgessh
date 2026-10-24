@@ -8,9 +8,17 @@ use crate::error::{AppError, AppResult};
 use crate::security::validate_alias;
 use crate::ssh_config::lexer::quote_arg;
 
-/// Locates `ssh` (or `scp`). On Windows the inbox OpenSSH is preferred over e.g. Git's copy,
-/// so the same agent and config handling applies as in a normal terminal.
+/// Locates `ssh` (or `scp`). The system OpenSSH is preferred (Windows' inbox copy over e.g.
+/// Git's, `/usr/bin` on macOS over Homebrew's), so the same agent and config handling applies
+/// as in a normal terminal.
 pub fn find_tool(name: &str) -> AppResult<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let system = PathBuf::from("/usr/bin").join(name);
+        if system.is_file() {
+            return Ok(system);
+        }
+    }
     #[cfg(windows)]
     {
         if let Some(root) = std::env::var_os("SystemRoot") {
@@ -24,9 +32,12 @@ pub fn find_tool(name: &str) -> AppResult<PathBuf> {
         }
     }
     which::which(name).map_err(|_| {
-        AppError::NotFound(format!(
-            "{name} was not found. Install the OpenSSH client (Windows: Settings → System → Optional features)."
-        ))
+        let hint = if cfg!(windows) {
+            " Install the OpenSSH client (Settings → System → Optional features)."
+        } else {
+            " Install the OpenSSH client."
+        };
+        AppError::NotFound(format!("{name} was not found.{hint}"))
     })
 }
 

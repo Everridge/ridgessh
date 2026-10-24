@@ -244,6 +244,19 @@ shadcn pieces: Sidebar, Resizable, DataTable, Dialog/Sheet, Command (Ctrl+K), Ta
 
 **As built (M9)**: a per-user NSIS installer (no admin rights; downloads WebView2 if it is missing). The updater plugin reads `latest.json` from the latest published GitHub release and checks its minisign signature. The public key is in `tauri.conf.json`; the private key and its password are kept outside the repo and stored as CI secrets. The app checks once on startup (there is a setting to turn this off) and again whenever the user clicks "Check now" in Settings → About. The update dialog shows the release notes and warns when terminal sessions are open. The NSIS installer then runs in passive mode and the app restarts. Before a newer schema is applied, the database is copied to `db.v<N>.bak`, and a database from a newer version is refused instead of being opened. Releases: `pnpm version:bump X.Y.Z` → `CHANGELOG.md` section → tag `vX.Y.Z` → the `release.yml` workflow builds the installer and creates a draft release. The draft becomes visible to the updater once it is published. Authenticode signing uses Azure Trusted Signing; it is switched on by repository variables and secrets, and builds are unsigned until those are set.
 
+**As built (M10)**:
+
+- The macOS build uses `/usr/bin/ssh` and `/usr/bin/scp` and stores the backup password in the Keychain.
+- New config and key files are created with mode `0600`, and replaced files keep their mode.
+- A symlinked `~/.ssh/config` is written through the link, so the link survives.
+- Apps opened from Finder start without `LANG` and without Homebrew on `PATH`, so terminal sessions get both.
+- "Open in external terminal" writes a temporary `.command` file that deletes itself, then opens it in Terminal or whichever app handles `.command` files.
+- Shortcuts use ⌘ (⌘K for quick connect). ⌘C and ⌘V use the standard Edit menu, and Ctrl+C always reaches the shell.
+- UI text names Finder and the Keychain instead of Explorer and Credential Manager.
+- Bundles are a universal `.app` and a `.dmg` for macOS 11 and later. The updater uses `.app.tar.gz`.
+- CI runs every check on macOS and builds the app bundle there.
+- The release workflow signs and notarizes when Apple Developer secrets are set. Without them the app is only ad-hoc signed.
+
 Critical path: **M2 parser** (must be lossless — the one place a bug can damage the user's real config) and **M4 write path**. Both get heavy unit + golden-file tests before any write is enabled.
 
 ## 15. Decisions taken (change if you disagree)

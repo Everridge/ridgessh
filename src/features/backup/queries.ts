@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { invalidateAll, keys } from "@/features/hosts/queries";
 import { api, errorMessage, type RestoreOptions, type Settings } from "@/lib/ipc";
+import { platform } from "@/lib/platform";
 
 export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: api.settingsGet });
 export const useBackupStatus = () =>
@@ -30,7 +31,7 @@ export function useRememberPassword() {
   const refresh = useRefreshBackups();
   return useMutation({
     mutationFn: (password: string) => api.backupPasswordRemember(password),
-    onSuccess: () => toast.success("Backup password saved in Windows Credential Manager"),
+    onSuccess: () => toast.success(`Backup password saved in ${platform.keychain}`),
     onError: (e) => toast.error(errorMessage(e)),
     onSettled: refresh,
   });

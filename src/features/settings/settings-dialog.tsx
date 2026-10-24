@@ -34,6 +34,7 @@ import {
 import { useUpdateStore } from "@/features/updates/store";
 import { api, type Settings, type SettingsView } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
+import { platform } from "@/lib/platform";
 
 export function SettingsDialog() {
   const open = useUiStore((s) => s.settingsOpen);
@@ -95,8 +96,8 @@ function SettingsForm({ view, onClose }: { view: SettingsView; onClose: () => vo
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label="Show in Explorer"
-                  title="Show in Explorer"
+                  aria-label={`Show in ${platform.fileManager}`}
+                  title={`Show in ${platform.fileManager}`}
                   onClick={() => void revealItemInDir(folder)}
                 >
                   <FolderOpenIcon />
@@ -216,7 +217,7 @@ function PasswordSection() {
       {remembered ? (
         <p className="flex items-center gap-2 text-sm">
           <CheckCircle2Icon className="size-4 text-emerald-600" />
-          Remembered in Windows Credential Manager. Automatic backups use it.
+          Remembered in {platform.keychain}. Automatic backups use it.
         </p>
       ) : (
         <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">

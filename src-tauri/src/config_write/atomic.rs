@@ -5,12 +5,22 @@
 //! - Windows: `ReplaceFileW` keeps the replaced file's ACL, attributes and creation time.
 //!   OpenSSH for Windows refuses a config that other users can write, so the ACL matters.
 //! - Unix: the original mode is copied (new files get `0600`), then `rename`.
+//!
+//! A symlinked target (dotfile managers) is resolved first, so the link stays a link and the
+//! file it points to gets the new content.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 pub fn replace_file(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let resolved;
+    let path = if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        resolved = fs::canonicalize(path)?;
+        resolved.as_path()
+    } else {
+        path
+    };
     let dir = path
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
@@ -27,7 +37,9 @@ pub fn replace_file(path: &Path, contents: &[u8]) -> io::Result<()> {
         } else {
             set_new_file_permissions(&tmp)?;
             fs::rename(&tmp, path)
-        }
+        }?;
+        sync_dir(dir);
+        Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
@@ -84,6 +96,17 @@ fn swap_in(target: &Path, replacement: &Path) -> io::Result<()> {
     fs::rename(replacement, target)
 }
 
+/// Makes the rename itself durable (Unix keeps it in the directory entry).
+#[cfg(unix)]
+fn sync_dir(dir: &Path) {
+    if let Ok(d) = fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) {}
+
 #[cfg(unix)]
 fn set_new_file_permissions(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -110,6 +133,34 @@ mod tests {
         assert_eq!(fs::read(&p).unwrap(), b"two");
         let leftovers: Vec<_> = fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(leftovers.len(), 1, "temp file left behind");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keeps_mode_and_symlinks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles-config");
+        fs::write(&real, b"old").unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).unwrap();
+        let link = dir.path().join("config");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        replace_file(&link, b"new").unwrap();
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(&real).unwrap(), b"new");
+        let mode = fs::metadata(&real).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+
+        let fresh = dir.path().join("fresh");
+        replace_file(&fresh, b"x").unwrap();
+        let mode = fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     /// The custom ACL on the original file must survive the replace.

@@ -10,6 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useTheme } from "@/components/theme-provider";
 import { invalidateAll } from "@/features/hosts/queries";
 import { api, errorMessage, type TerminalExit } from "@/lib/ipc";
+import { isMac } from "@/lib/platform";
 import { parseProgress, useTerminalStore, type TerminalTab } from "./store";
 
 const DARK: ITheme = {
@@ -86,7 +87,11 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
     };
     const paste = () => void readText().then((text) => text && t.paste(text));
     t.attachCustomKeyEventHandler((e) => {
-      if (e.type !== "keydown" || !e.ctrlKey) return true;
+      if (e.type !== "keydown") return true;
+      // macOS: ⌘ shortcuts never go to the shell. ⌘C/⌘V take the native copy/paste route
+      // (Edit menu → xterm's clipboard handlers), and Ctrl+C stays an interrupt.
+      if (isMac) return !e.metaKey;
+      if (!e.ctrlKey) return true;
       // Leave app shortcuts (quick connect) to the window.
       if (e.shiftKey && e.code === "KeyK") return false;
       if (e.code === "KeyC" && (e.shiftKey || t.hasSelection())) {

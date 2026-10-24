@@ -5,7 +5,7 @@ Lightweight desktop SSH connection manager (Tauri 2 + React + shadcn/ui). See [d
 ## Prerequisites
 
 - Node 22+, pnpm 10+
-- Rust (stable) with the MSVC toolchain on Windows, plus WebView2 (preinstalled on Windows 11)
+- Rust (stable): with the MSVC toolchain and WebView2 on Windows (WebView2 is preinstalled on Windows 11), or with the Xcode command line tools on macOS
 - OpenSSH client (`ssh`, `scp`) on `PATH`
 
 ## Commands
@@ -14,7 +14,7 @@ Lightweight desktop SSH connection manager (Tauri 2 + React + shadcn/ui). See [d
 | ------------------------------- | --------------------------------------------------- |
 | `pnpm install`                  | install frontend deps                               |
 | `pnpm tauri dev`                | run the app with hot reload                         |
-| `pnpm tauri build`              | build the NSIS installer (needs the updater key)    |
+| `pnpm tauri build`              | build the installer (Windows NSIS / macOS app+dmg)  |
 | `pnpm check`                    | typecheck, lint, frontend tests, clippy, Rust tests |
 | `pnpm format` / `pnpm rust:fmt` | format frontend / Rust code                         |
 
@@ -58,4 +58,12 @@ variables `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT` and `AZURE_SIGNING_P
 `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` and `AZURE_TENANT_ID`. Without them the installer is unsigned,
 and SmartScreen shows "Windows protected your PC" (More info → Run anyway).
 
-App data lives in `%APPDATA%\com.everridge.ridgessh` (database, default backup folder).
+The release workflow also builds a universal macOS app. To sign and notarize it you need an Apple Developer
+account and these secrets: `APPLE_CERTIFICATE` (a base64 `.p12` of a Developer ID Application certificate),
+`APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` (an app-specific
+password) and `APPLE_TEAM_ID`. Without them the app is only ad-hoc signed, and Gatekeeper blocks it on first
+launch. To open it anyway: System Settings → Privacy & Security → Open Anyway, or
+`xattr -dr com.apple.quarantine /Applications/RidgeSSH.app`.
+
+The app data folder, which holds the database and the default backup folder, is `%APPDATA%\com.everridge.ridgessh` on Windows and
+`~/Library/Application Support/com.everridge.ridgessh` on macOS.

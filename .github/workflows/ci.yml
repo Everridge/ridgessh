@@ -11,7 +11,11 @@ concurrency:
 
 jobs:
   check:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -29,3 +33,7 @@ jobs:
       - run: node scripts/version.mjs check
       - run: pnpm format:check
       - run: pnpm check
+      # Builds the app bundle (unsigned, no updater artifacts) to catch bundling problems early.
+      - name: Build the macOS app
+        if: runner.os == 'macOS'
+        run: pnpm tauri build --bundles app --no-sign --config '{"bundle":{"createUpdaterArtifacts":false}}'

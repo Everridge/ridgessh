@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/ui";
 import { useTerminalStore, type TabStatus, type TerminalTab } from "./store";
 import { TerminalView } from "./terminal-view";
+import { platform } from "@/lib/platform";
 
 const STATUS_DOT: Record<TabStatus, string> = {
   connecting: "bg-amber-400 animate-pulse",
@@ -97,7 +98,7 @@ export function TerminalPanel() {
               <PlusIcon />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>New session (Ctrl+K)</TooltipContent>
+          <TooltipContent>New session ({platform.shortcut("K")})</TooltipContent>
         </Tooltip>
       </div>
 
@@ -105,7 +106,7 @@ export function TerminalPanel() {
         {tabs.length === 0 ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <SquareTerminalIcon className="size-4" />
-            No open sessions. Double-click a host or press Ctrl+K.
+            No open sessions. Double-click a host or press {platform.shortcut("K")}.
           </div>
         ) : (
           tabs.map((t) => <TerminalView key={t.id} tab={t} active={t.id === activeId} />)

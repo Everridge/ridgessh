@@ -1,10 +1,18 @@
-# Builds the Windows installer for a version tag and drafts a GitHub release with it.
-# Publishing the draft is what makes the in-app updater offer the new version.
+# Builds the Windows installer and the macOS app for a version tag and attaches them, with
+# latest.json for the updater, to a draft GitHub release. Publishing the draft is what makes
+# the in-app updater offer the new version.
 #
 # Secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD (updater signature).
-# Optional Authenticode signing with Azure Trusted Signing: repository variables
+#
+# Optional Windows code signing (Azure Trusted Signing): repository variables
 # AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE and secrets
-# AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID. Without them the installer is unsigned.
+# AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID.
+#
+# Optional macOS signing and notarization (Apple Developer Program): secrets APPLE_CERTIFICATE
+# (base64 .p12 of a "Developer ID Application" certificate), APPLE_CERTIFICATE_PASSWORD,
+# APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID.
+#
+# Without the optional ones the builds are unsigned (macOS: ad-hoc signed).
 name: Release
 
 on:
@@ -15,8 +23,44 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the app version
+        run: node scripts/version.mjs check ${{ github.ref_name }}
+      - name: Release notes from CHANGELOG.md
+        run: node scripts/version.mjs notes ${{ github.ref_name }} > notes.md
+      - id: release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = require("fs").readFileSync("notes.md", "utf8");
+            const tag = context.ref.replace("refs/tags/", "");
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `RidgeSSH ${tag}`,
+              body,
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
+  build:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: ""
+          - os: macos-latest
+            args: --target universal-apple-darwin
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -25,25 +69,17 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
-      - name: Check the tag matches the app version
-        run: node scripts/version.mjs check ${{ github.ref_name }}
-      - name: Release notes from CHANGELOG.md
-        id: notes
-        shell: bash
-        run: |
-          {
-            echo 'body<<NOTES_EOF'
-            node scripts/version.mjs notes ${{ github.ref_name }}
-            echo 'NOTES_EOF'
-          } >> "$GITHUB_OUTPUT"
       - run: pnpm check
 
-      - name: Set up code signing
-        if: ${{ vars.AZURE_SIGNING_ENDPOINT != '' }}
+      - name: Set up Windows code signing
+        if: ${{ runner.os == 'Windows' && vars.AZURE_SIGNING_ENDPOINT != '' }}
         shell: bash
         run: |
           cargo install trusted-signing-cli --locked
@@ -51,6 +87,31 @@ jobs:
           {"bundle":{"windows":{"signCommand":"trusted-signing-cli -e ${{ vars.AZURE_SIGNING_ENDPOINT }} -a ${{ vars.AZURE_SIGNING_ACCOUNT }} -c ${{ vars.AZURE_SIGNING_PROFILE }} -d RidgeSSH %1"}}}
           JSON
           echo "TAURI_EXTRA_ARGS=--config $RUNNER_TEMP/signing.conf.json" >> "$GITHUB_ENV"
+
+      # Only exported when present: an empty APPLE_CERTIFICATE would make the build fail.
+      - name: Set up macOS signing and notarization
+        if: ${{ runner.os == 'macOS' }}
+        shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          ID: ${{ secrets.APPLE_ID }}
+          PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$CERT" ]; then
+            echo "::warning::No Apple certificate: the macOS app is ad-hoc signed and not notarized."
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE=$CERT"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+            echo "APPLE_ID=$ID"
+            echo "APPLE_PASSWORD=$PASSWORD"
+            echo "APPLE_TEAM_ID=$TEAM"
+          } >> "$GITHUB_ENV"
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -61,9 +122,5 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: RidgeSSH ${{ github.ref_name }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: true
-          prerelease: false
-          args: ${{ env.TAURI_EXTRA_ARGS }}
+          releaseId: ${{ needs.draft.outputs.id }}
+          args: ${{ matrix.args }} ${{ env.TAURI_EXTRA_ARGS }}

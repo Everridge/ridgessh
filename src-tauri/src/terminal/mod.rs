@@ -74,6 +74,9 @@ impl TerminalManager {
         let mut cmd = CommandBuilder::new(req.program);
         cmd.args(&req.args);
         cmd.env("TERM", "xterm-256color");
+        for (k, v) in gui_env_fixes() {
+            cmd.env(k, v);
+        }
         if let Some(home) = dirs::home_dir() {
             cmd.cwd(home);
         }
@@ -186,27 +189,157 @@ fn kill(killer: &mut (dyn ChildKiller + Send + Sync)) -> AppResult<()> {
     }
 }
 
-/// Opens `ssh args` in a separate console window (Windows Terminal if it is the default).
-pub fn open_external(program: &Path, args: &[String]) -> AppResult<()> {
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(args);
-    if let Some(home) = dirs::home_dir() {
-        cmd.current_dir(home);
+/// Environment fixes for apps started from Finder or the Dock on macOS, which get launchd's
+/// bare environment: no `LANG` (remote shells then mangle UTF-8) and a `PATH` without Homebrew
+/// (where `ProxyCommand` helpers usually live).
+fn gui_env_fixes() -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if cfg!(target_os = "macos") {
+        if std::env::var_os("LANG").is_none() && std::env::var_os("LC_ALL").is_none() {
+            out.push(("LANG".into(), "en_US.UTF-8".into()));
+        }
+        let path = std::env::var("PATH").unwrap_or_default();
+        let mut parts: Vec<&str> = path.split(':').filter(|p| !p.is_empty()).collect();
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
+            if !parts.contains(&extra) {
+                parts.push(extra);
+            }
+        }
+        out.push(("PATH".into(), parts.join(":")));
     }
+    out
+}
+
+/// Opens `ssh args` in a separate terminal window: a new console on Windows (Windows Terminal
+/// if it is the default), whatever app opens `.command` files (Terminal) on macOS.
+pub fn open_external(program: &Path, args: &[String]) -> AppResult<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-        cmd.creation_flags(CREATE_NEW_CONSOLE);
+        let mut cmd = std::process::Command::new(program);
+        cmd.args(args).creation_flags(CREATE_NEW_CONSOLE);
+        if let Some(home) = dirs::home_dir() {
+            cmd.current_dir(home);
+        }
         cmd.spawn()?;
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = cmd;
+        let script = std::env::temp_dir().join(format!(
+            "ridgessh-{}.command",
+            uuid::Uuid::new_v4().simple()
+        ));
+        write_command_file(&script, program, args)?;
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg(&script)
+            .status()?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&script);
+            return Err(AppError::Other("could not open a terminal window".into()));
+        }
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (program, args);
         Err(AppError::Other(
-            "external terminal is not supported on this platform yet".into(),
+            "external terminal is not supported on this platform".into(),
         ))
+    }
+}
+
+/// A shell script that deletes itself and then becomes `program args`.
+#[cfg(unix)]
+fn write_command_file(path: &Path, program: &Path, args: &[String]) -> AppResult<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let line = std::iter::once(program.to_string_lossy().into_owned())
+        .chain(args.iter().cloned())
+        .map(|a| sh_quote(&a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o700)
+        .open(path)?;
+    write!(f, "#!/bin/sh\nrm -f \"$0\"\ncd ~ && clear\nexec {line}\n")?;
+    Ok(())
+}
+
+/// POSIX single quoting, safe for any text without NUL.
+#[cfg(unix)]
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn command_file_runs_the_exact_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("t.command");
+        let out = dir.path().join("out");
+        // `printf` stands in for ssh: every argument must arrive unchanged.
+        let tricky = ["it's", "two words", "$HOME", "`x`", "a\"b", ";", ""];
+        let mut args = vec!["%s|".to_string()];
+        args.extend(tricky.iter().map(|s| s.to_string()));
+        write_command_file(&script, Path::new("printf"), &args).unwrap();
+        let status = std::process::Command::new("/bin/sh")
+            .arg(&script)
+            .env("TERM", "dumb")
+            .stdout(std::fs::File::create(&out).unwrap())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let printed = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            printed.ends_with(&format!("{}|", tricky.join("|"))),
+            "{printed:?}"
+        );
+        assert!(!script.exists(), "the script removes itself");
+    }
+
+    #[test]
+    fn pty_session_reports_output_and_exit_code() {
+        let manager = Arc::new(TerminalManager::default());
+        let (data_tx, data_rx) = mpsc::channel::<Vec<u8>>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let on_data = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(bytes) = body {
+                let _ = data_tx.send(bytes);
+            }
+            Ok(())
+        });
+        manager
+            .spawn(
+                SpawnRequest {
+                    program: &PathBuf::from("/bin/sh"),
+                    args: vec!["-c".into(), "printf ridge-pty-ok; exit 3".into()],
+                    cols: 80,
+                    rows: 24,
+                },
+                on_data,
+                Channel::new(|_| Ok(())),
+                move |code| done_tx.send(code).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            Some(3)
+        );
+        let mut seen = Vec::new();
+        while let Ok(chunk) = data_rx.recv_timeout(Duration::from_millis(300)) {
+            seen.extend(chunk);
+        }
+        assert!(String::from_utf8_lossy(&seen).contains("ridge-pty-ok"));
     }
 }
 

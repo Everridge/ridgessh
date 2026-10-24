@@ -36,6 +36,7 @@ import {
   useDeleteBackup,
   useRememberPassword,
 } from "./queries";
+import { platform } from "@/lib/platform";
 
 export function BackupsDialog() {
   const open = useUiStore((s) => s.backupsOpen);
@@ -83,7 +84,7 @@ function Body() {
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label="Show in Explorer"
+              aria-label={`Show in ${platform.fileManager}`}
               onClick={() => void revealItemInDir(status.backupDir)}
             >
               <FolderOpenIcon />
@@ -150,7 +151,7 @@ function Body() {
                 <Button
                   size="icon-sm"
                   variant="ghost"
-                  aria-label={`Show ${b.fileName} in Explorer`}
+                  aria-label={`Show ${b.fileName} in ${platform.fileManager}`}
                   onClick={() => void revealItemInDir(b.path)}
                 >
                   <FolderOpenIcon />
@@ -239,7 +240,7 @@ function OneTimePassword({ onClose }: { onClose: () => void }) {
         {fields}
         <label className="flex items-center gap-2 text-sm">
           <Checkbox checked={rememberIt} onCheckedChange={(v) => setRememberIt(v === true)} />
-          Remember in Windows Credential Manager (turns on automatic backups)
+          Remember in {platform.keychain} (turns on automatic backups)
         </label>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
