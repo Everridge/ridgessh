@@ -351,6 +351,97 @@ export interface TerminalExit {
   exitCode: number | null;
 }
 
+export interface ExportSelection {
+  hostIds: string[];
+  scriptIds: string[];
+  /** Include the private key files hosts name in IdentityFile. */
+  includeKeys: boolean;
+}
+
+export interface ExportSummary {
+  path: string;
+  hosts: number;
+  groups: number;
+  scripts: number;
+  keys: number;
+  warnings: string[];
+}
+
+export type ImportSource =
+  { kind: "export"; path: string; password: string } | { kind: "config"; path: string };
+
+export type ItemStatus = "new" | "same" | "differs";
+export type ImportStrategy = "skip" | "import" | "overwrite" | "copy";
+
+export interface HostImportPreview {
+  key: string;
+  alias: string;
+  hostname: string | null;
+  user: string | null;
+  port: number | null;
+  groupPath: string[];
+  status: ItemStatus;
+  existingId: string | null;
+  differences: string[];
+  copyAlias: string;
+  suggested: ImportStrategy;
+  note: string | null;
+}
+
+export interface ScriptImportPreview {
+  key: string;
+  name: string;
+  status: ItemStatus;
+  existingId: string | null;
+  differences: string[];
+  copyName: string;
+  suggested: ImportStrategy;
+}
+
+export interface KeyImportPreview {
+  identityFile: string;
+  target: string | null;
+  status: "new" | "same" | "exists" | "unsupported";
+  hasPublicKey: boolean;
+}
+
+export interface ImportPreview {
+  kind: "export" | "config";
+  fileName: string;
+  createdAt: string | null;
+  appVersion: string | null;
+  hosts: HostImportPreview[];
+  scripts: ScriptImportPreview[];
+  keys: KeyImportPreview[];
+  warnings: string[];
+}
+
+export interface ImportChoice {
+  key: string;
+  strategy: ImportStrategy;
+}
+
+export interface ImportRequest {
+  targetGroupId: string | null;
+  hosts: ImportChoice[];
+  scripts: ImportChoice[];
+  installKeys: boolean;
+}
+
+export interface ImportResult {
+  created: number;
+  overwritten: number;
+  copied: number;
+  skipped: number;
+  scripts: number;
+  groupsCreated: number;
+  keysInstalled: string[];
+  /** Imported hosts with connection values to write to ~/.ssh/config. */
+  pendingHostIds: string[];
+  warnings: string[];
+  autoBackup: BackupInfo | null;
+}
+
 /** Typed wrappers around Tauri commands. Keep in sync with `src-tauri/src/commands`. */
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
@@ -451,6 +542,14 @@ export const api = {
     onData: Channel<ArrayBuffer>,
     onExit: Channel<TerminalExit>,
   ) => invoke<TerminalOpened>("script_open", { run, cols, rows, onData, onExit }),
+  exportCreate: (path: string, password: string, selection: ExportSelection) =>
+    invoke<ExportSummary>("export_create", { path, password, selection }),
+  /** Plain, unencrypted ssh_config text with the hosts' connection values. */
+  exportConfigFile: (path: string, hostIds: string[]) =>
+    invoke<string>("export_config_file", { path, hostIds }),
+  importPreview: (source: ImportSource) => invoke<ImportPreview>("import_preview", { source }),
+  importApply: (source: ImportSource, request: ImportRequest) =>
+    invoke<ImportResult>("import_apply", { source, request }),
   hostActivity: (hostId: string, limit?: number) =>
     invoke<Activity[]>("host_activity", { hostId, limit }),
 };

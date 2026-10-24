@@ -7,6 +7,7 @@ use super::terminal::{Job, TerminalOpened, live_host, spawn_job};
 use crate::AppState;
 use crate::backup::Reason;
 use crate::error::{AppError, AppResult};
+use crate::history::Source;
 use crate::scp::{self, Direction, TransferSpec};
 use crate::scripts::{self, RunMode, Script, ScriptInput};
 use crate::settings;
@@ -70,7 +71,7 @@ pub fn scripts_list(state: State<'_, AppState>) -> AppResult<Vec<Script>> {
 #[tauri::command]
 pub async fn script_create(state: State<'_, AppState>, input: ScriptInput) -> AppResult<Script> {
     state.auto_backup(Reason::Periodic)?;
-    state.db.tx(|tx| scripts::create(tx, input))
+    state.db.tx(|tx| scripts::create(tx, input, Source::User))
 }
 
 #[tauri::command]
@@ -80,13 +81,15 @@ pub async fn script_update(
     input: ScriptInput,
 ) -> AppResult<Script> {
     state.auto_backup(Reason::Periodic)?;
-    state.db.tx(|tx| scripts::update(tx, &id, input))
+    state
+        .db
+        .tx(|tx| scripts::update(tx, &id, input, Source::User))
 }
 
 #[tauri::command]
 pub async fn script_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.auto_backup(Reason::Periodic)?;
-    state.db.tx(|tx| scripts::delete(tx, &id))
+    state.db.tx(|tx| scripts::delete(tx, &id, Source::User))
 }
 
 /// Reads a local script file chosen by the user (UTF-8 text, size-limited).

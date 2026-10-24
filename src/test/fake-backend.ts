@@ -13,6 +13,11 @@ import type {
   HistoryFilter,
   Host,
   HostInput,
+  ImportPreview,
+  ImportRequest,
+  ImportResult,
+  ImportSource,
+  ExportSelection,
   RenameSuggestion,
   RestoreOptions,
   Script,
@@ -42,6 +47,11 @@ export interface FakeSeed {
   lastRemote?: string;
   /** What the native file/folder picker returns. */
   dialogResult?: string | string[];
+  /** What the native save dialog returns. */
+  saveResult?: string;
+  /** What `import_preview` shows, and the password an export source needs. */
+  importPreview?: ImportPreview;
+  importPassword?: string;
 }
 
 export function installFakeBackend(seed: FakeSeed = {}) {
@@ -208,6 +218,68 @@ export function installFakeBackend(seed: FakeSeed = {}) {
         return seed.lastRemote ?? null;
       case "plugin:dialog|open":
         return seed.dialogResult ?? null;
+      case "plugin:dialog|save":
+        return seed.saveResult ?? null;
+      case "export_create": {
+        const sel = args.selection as ExportSelection;
+        return {
+          path: String(args.path),
+          hosts: sel.hostIds.length,
+          groups: 0,
+          scripts: sel.scriptIds.length,
+          keys: 0,
+          warnings: [],
+        };
+      }
+      case "export_config_file":
+        return String(args.path);
+      case "import_preview": {
+        const source = args.source as ImportSource;
+        if (source.kind === "export" && source.password !== seed.importPassword)
+          throw { kind: "validation", message: "wrong password for this export" };
+        if (!seed.importPreview) throw { kind: "validation", message: "not an export" };
+        return { ...seed.importPreview, kind: source.kind };
+      }
+      case "import_apply": {
+        const req = args.request as ImportRequest;
+        const preview = seed.importPreview!;
+        const r: ImportResult = {
+          created: 0,
+          overwritten: 0,
+          copied: 0,
+          skipped: 0,
+          scripts: 0,
+          groupsCreated: 0,
+          keysInstalled: [],
+          pendingHostIds: [],
+          warnings: [],
+          autoBackup: null,
+        };
+        for (const c of req.hosts) {
+          const p = preview.hosts.find((h) => h.key === c.key)!;
+          if (c.strategy === "skip") {
+            r.skipped++;
+            continue;
+          }
+          if (c.strategy === "overwrite") {
+            r.overwritten++;
+            continue;
+          }
+          const alias = c.strategy === "copy" ? p.copyAlias : p.alias;
+          const h = makeHost({
+            id: id(),
+            alias,
+            hostname: p.hostname,
+            groupId: req.targetGroupId,
+            syncState: "db_only",
+          });
+          hosts.push(h);
+          r[c.strategy === "copy" ? "copied" : "created"]++;
+          r.pendingHostIds.push(h.id);
+        }
+        r.scripts = req.scripts.filter((c) => c.strategy !== "skip").length;
+        return r;
+      }
       case "hosts_empty_trash": {
         const trashed = hosts.filter((h) => h.deletedAt);
         for (const h of trashed) hosts.splice(hosts.indexOf(h), 1);

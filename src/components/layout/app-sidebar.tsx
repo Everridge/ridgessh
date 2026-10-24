@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 import {
   ArchiveRestoreIcon,
+  ArrowDownUpIcon,
+  DownloadIcon,
+  UploadIcon,
   ChevronRightIcon,
   ClockIcon,
   FolderIcon,
@@ -191,6 +194,24 @@ export function AppSidebar() {
                 />
               )}
             </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuButton tooltip="Import / export">
+                  <ArrowDownUpIcon />
+                  <span>Import / export</span>
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="right" align="end">
+                <DropdownMenuItem onSelect={() => useUiStore.getState().setImportOpen(true)}>
+                  <UploadIcon /> Import…
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => useUiStore.getState().openExport()}>
+                  <DownloadIcon /> Export…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton tooltip="Settings" onClick={() => setSettingsOpen(true)}>

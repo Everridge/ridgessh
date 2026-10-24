@@ -376,7 +376,10 @@ fn real_cost_round_trip() {
     let data = encrypt(b"payload", &pw("correct horse"), WORK_FACTOR).unwrap();
     let enc = t.elapsed();
     let t = std::time::Instant::now();
-    assert_eq!(decrypt(&data, &pw("correct horse")).unwrap(), b"payload");
+    assert_eq!(
+        decrypt(&data, &pw("correct horse"), "backup").unwrap(),
+        b"payload"
+    );
     println!("encrypt {enc:?}, decrypt {:?}", t.elapsed());
 }
 

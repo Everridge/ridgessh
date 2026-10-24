@@ -183,6 +183,10 @@ pub fn run() {
             commands::jobs::script_delete,
             commands::jobs::script_read_file,
             commands::jobs::script_open,
+            commands::transfer::export_create,
+            commands::transfer::export_config_file,
+            commands::transfer::import_preview,
+            commands::transfer::import_apply,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

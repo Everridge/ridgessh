@@ -3,6 +3,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   DownloadIcon,
   ExternalLinkIcon,
+  FileDownIcon,
   FolderInputIcon,
   PencilIcon,
   PlayIcon,
@@ -92,6 +93,13 @@ export function HostListPanel() {
                     onClick={() => useUiStore.getState().openScriptRun(checked.map((h) => h.id))}
                   >
                     <PlayIcon /> Run script
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => useUiStore.getState().openExport(checked.map((h) => h.id))}
+                  >
+                    <FileDownIcon /> Export
                   </Button>
                   <MoveMenu
                     groups={groups}
@@ -253,6 +261,14 @@ function HostRow({ host, groups }: { host: Host; groups: Group[] }) {
                 }}
               >
                 <PlayIcon /> Run script…
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  const { checkedIds, openExport } = useUiStore.getState();
+                  openExport(checkedIds.includes(host.id) ? checkedIds : [host.id]);
+                }}
+              >
+                <FileDownIcon /> Export…
               </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem onSelect={() => openHostForm(host.id)}>

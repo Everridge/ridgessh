@@ -131,7 +131,7 @@ fn read_current(path: &Path) -> AppResult<Current> {
 }
 
 /// The op a host offers, if any, and whether it is pre-selected.
-fn offered_op(h: &Host) -> Option<(Op, bool)> {
+pub(crate) fn offered_op(h: &Host) -> Option<(Op, bool)> {
     if h.deleted_at.is_some() {
         let in_config = h.config_snapshot.is_some() && h.sync_state != "removed_from_config";
         return in_config.then_some((Op::Remove, false));

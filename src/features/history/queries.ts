@@ -27,7 +27,7 @@ export const useRevertBatch = () =>
 
 /** Kinds of entities whose changes can be undone (mirrors `revert::supported`). */
 export const canRevert = (e: AuditEntry) =>
-  e.entityType === "host" || e.entityType === "group" || e.entityType === "settings";
+  ["host", "group", "settings", "script"].includes(e.entityType);
 
 export const SOURCE_LABELS: Record<AuditEntry["source"], string> = {
   user: "you",

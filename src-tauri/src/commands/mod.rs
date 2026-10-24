@@ -10,3 +10,4 @@ pub mod jobs;
 pub mod sync;
 pub mod tags;
 pub mod terminal;
+pub mod transfer;

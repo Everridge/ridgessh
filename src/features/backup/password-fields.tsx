@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 export const MIN_PASSWORD = 8;
 
 /** New password + confirmation. Returns the password once both match and it is long enough. */
-export function usePasswordFields() {
+export function usePasswordFields(label = "Backup password") {
   const [password, setPassword] = useState("");
   const [repeat, setRepeat] = useState("");
   const id = useId();
@@ -16,7 +16,7 @@ export function usePasswordFields() {
   const fields = (
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="grid gap-1.5">
-        <Label htmlFor={`${id}-pw`}>Backup password</Label>
+        <Label htmlFor={`${id}-pw`}>{label}</Label>
         <Input
           id={`${id}-pw`}
           type="password"

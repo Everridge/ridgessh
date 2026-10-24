@@ -10,6 +10,8 @@ import { RestoreDialog } from "@/features/backup/restore-dialog";
 import { ConfigWriteDialog } from "@/features/config-write/config-write-dialog";
 import { HistoryDialog } from "@/features/history/history-dialog";
 import { RunScriptDialog } from "@/features/scripts/run-script-dialog";
+import { ExportDialog } from "@/features/export-import/export-dialog";
+import { ImportDialog } from "@/features/export-import/import-dialog";
 import { ScriptsDialog } from "@/features/scripts/scripts-dialog";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { TransferDialog } from "@/features/transfer/transfer-dialog";
@@ -78,6 +80,8 @@ export default function App() {
       <TransferDialog />
       <ScriptsDialog />
       <RunScriptDialog />
+      <ExportDialog />
+      <ImportDialog />
       <QuickConnect />
     </SidebarProvider>
   );

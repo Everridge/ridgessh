@@ -159,9 +159,18 @@ fn validate(input: &mut ScriptInput) -> AppResult<()> {
     Ok(())
 }
 
-pub fn create(tx: &Transaction, mut input: ScriptInput) -> AppResult<Script> {
+pub fn create(tx: &Transaction, input: ScriptInput, source: Source) -> AppResult<Script> {
+    create_with_id(tx, &new_id(), input, source)
+}
+
+/// Creates a script with a given id (used when undoing its deletion).
+pub fn create_with_id(
+    tx: &Transaction,
+    id: &str,
+    mut input: ScriptInput,
+    source: Source,
+) -> AppResult<Script> {
     validate(&mut input)?;
-    let id = new_id();
     let ts = now();
     tx.execute(
         &format!("INSERT INTO scripts ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)"),
@@ -176,12 +185,12 @@ pub fn create(tx: &Transaction, mut input: ScriptInput) -> AppResult<Script> {
             ts
         ],
     )?;
-    let s = get(tx, &id)?;
+    let s = get(tx, id)?;
     history::record(
         tx,
-        Source::User,
+        source,
         EntityType::Script,
-        &id,
+        id,
         Action::Create,
         None::<&Script>,
         Some(&s),
@@ -189,7 +198,12 @@ pub fn create(tx: &Transaction, mut input: ScriptInput) -> AppResult<Script> {
     Ok(s)
 }
 
-pub fn update(tx: &Transaction, id: &str, mut input: ScriptInput) -> AppResult<Script> {
+pub fn update(
+    tx: &Transaction,
+    id: &str,
+    mut input: ScriptInput,
+    source: Source,
+) -> AppResult<Script> {
     validate(&mut input)?;
     let before = get(tx, id)?;
     tx.execute(
@@ -210,7 +224,7 @@ pub fn update(tx: &Transaction, id: &str, mut input: ScriptInput) -> AppResult<S
     if after != before {
         history::record(
             tx,
-            Source::User,
+            source,
             EntityType::Script,
             id,
             Action::Update,
@@ -221,12 +235,12 @@ pub fn update(tx: &Transaction, id: &str, mut input: ScriptInput) -> AppResult<S
     Ok(after)
 }
 
-pub fn delete(tx: &Transaction, id: &str) -> AppResult<()> {
+pub fn delete(tx: &Transaction, id: &str, source: Source) -> AppResult<()> {
     let before = get(tx, id)?;
     tx.execute("DELETE FROM scripts WHERE id = ?1", [id])?;
     history::record(
         tx,
-        Source::User,
+        source,
         EntityType::Script,
         id,
         Action::Delete,
@@ -291,30 +305,40 @@ mod tests {
     fn crud_normalizes_and_records_history() {
         let db = Db::open_in_memory().unwrap();
         let s = db
-            .tx(|tx| create(tx, input(" Disk ", "\u{feff}df -h\r\nuptime")))
+            .tx(|tx| create(tx, input(" Disk ", "\u{feff}df -h\r\nuptime"), Source::User))
             .unwrap();
         assert_eq!(s.name, "Disk");
         assert_eq!(s.content, "df -h\nuptime\n");
         let mut i = input("Disk", "df -h");
         i.run_mode = RunMode::Copy;
-        let s = db.tx(|tx| update(tx, &s.id, i)).unwrap();
+        let s = db.tx(|tx| update(tx, &s.id, i, Source::User)).unwrap();
         assert_eq!(s.run_mode, RunMode::Copy);
         assert_eq!(db.tx(list).unwrap().len(), 1);
-        db.tx(|tx| delete(tx, &s.id)).unwrap();
+        db.tx(|tx| delete(tx, &s.id, Source::User)).unwrap();
         assert!(db.tx(list).unwrap().is_empty());
         let log = db
             .tx(|tx| history::for_entity(tx, EntityType::Script, &s.id, 10))
             .unwrap();
         assert_eq!(log.len(), 3);
 
-        assert!(db.tx(|tx| create(tx, input("", "x"))).is_err());
-        assert!(db.tx(|tx| create(tx, input("x", "  \n"))).is_err());
+        assert!(
+            db.tx(|tx| create(tx, input("", "x"), Source::User))
+                .is_err()
+        );
+        assert!(
+            db.tx(|tx| create(tx, input("x", "  \n"), Source::User))
+                .is_err()
+        );
         let mut bad = input("x", "ls");
         bad.interpreter = "bash; rm".into();
-        assert!(db.tx(|tx| create(tx, bad)).is_err());
+        assert!(db.tx(|tx| create(tx, bad, Source::User)).is_err());
         assert!(
-            db.tx(|tx| create(tx, input("x", &"a".repeat(MAX_SCRIPT_BYTES + 1))))
-                .is_err()
+            db.tx(|tx| create(
+                tx,
+                input("x", &"a".repeat(MAX_SCRIPT_BYTES + 1)),
+                Source::User
+            ))
+            .is_err()
         );
     }
 

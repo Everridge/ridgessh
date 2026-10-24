@@ -14,6 +14,9 @@ interface UiState {
   scriptRun: { hostIds: string[]; scriptId?: string } | null;
   settingsOpen: boolean;
   backupsOpen: boolean;
+  /** Export dialog; `hostIds` pre-selects those hosts (`null` = all). */
+  exportTarget: { hostIds: string[] | null } | null;
+  importOpen: boolean;
   /** Backup file being restored (from the list or picked from disk). */
   restoreTarget: { path: string; name: string } | null;
   search: string;
@@ -48,6 +51,9 @@ interface UiState {
   setSettingsOpen: (open: boolean) => void;
   setBackupsOpen: (open: boolean) => void;
   setRestoreTarget: (target: { path: string; name: string } | null) => void;
+  openExport: (hostIds?: string[]) => void;
+  closeExport: () => void;
+  setImportOpen: (open: boolean) => void;
 }
 
 /** Pure UI state. Backend data lives in TanStack Query, not here. */
@@ -68,6 +74,8 @@ export const useUiStore = create<UiState>((set) => ({
   settingsOpen: false,
   backupsOpen: false,
   restoreTarget: null,
+  exportTarget: null,
+  importOpen: false,
   setView: (view) => set({ view, groupId: null, selectedHostId: null, checkedIds: [] }),
   setGroup: (groupId) => set({ view: "group", groupId, selectedHostId: null, checkedIds: [] }),
   setSearch: (search) => set({ search }),
@@ -94,4 +102,7 @@ export const useUiStore = create<UiState>((set) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setBackupsOpen: (backupsOpen) => set({ backupsOpen }),
   setRestoreTarget: (restoreTarget) => set({ restoreTarget }),
+  openExport: (hostIds) => set({ exportTarget: { hostIds: hostIds ?? null } }),
+  closeExport: () => set({ exportTarget: null }),
+  setImportOpen: (importOpen) => set({ importOpen }),
 }));

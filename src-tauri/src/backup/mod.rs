@@ -34,7 +34,7 @@ pub const EXTENSION: &str = "rsbak";
 const PREFIX: &str = "ridgessh-";
 const FORMAT: u32 = 1;
 /// scrypt cost (2^18 ≈ 256 MiB, about a second). Decryption accepts up to 2^20.
-const WORK_FACTOR: u8 = 18;
+pub(crate) const WORK_FACTOR: u8 = 18;
 const MAX_WORK_FACTOR: u8 = 20;
 const TS_FORMAT: &str = "%Y%m%dT%H%M%S%.3fZ";
 
@@ -95,7 +95,6 @@ pub enum Reason {
     BulkDelete,
     Sync,
     Periodic,
-    #[allow(dead_code)] // M8
     Import,
     /// Before undoing changes from history.
     Revert,
@@ -225,7 +224,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn encrypt(plain: &[u8], password: &SecretString, work_factor: u8) -> AppResult<Vec<u8>> {
+pub(crate) fn encrypt(
+    plain: &[u8],
+    password: &SecretString,
+    work_factor: u8,
+) -> AppResult<Vec<u8>> {
     let mut recipient = age::scrypt::Recipient::new(password.clone());
     recipient.set_work_factor(work_factor);
     let encryptor =
@@ -238,8 +241,9 @@ fn encrypt(plain: &[u8], password: &SecretString, work_factor: u8) -> AppResult<
     Ok(out)
 }
 
-fn decrypt(data: &[u8], password: &SecretString) -> AppResult<Vec<u8>> {
-    let not_backup = || AppError::Validation("this is not a RidgeSSH backup file".into());
+/// Decrypts an age passphrase file. `what` names the file kind in error messages.
+pub(crate) fn decrypt(data: &[u8], password: &SecretString, what: &str) -> AppResult<Vec<u8>> {
+    let not_backup = || AppError::Validation(format!("this is not a RidgeSSH {what} file"));
     let decryptor = age::Decryptor::new_buffered(data).map_err(|_| not_backup())?;
     if !decryptor.is_scrypt() {
         return Err(not_backup());
@@ -250,14 +254,14 @@ fn decrypt(data: &[u8], password: &SecretString) -> AppResult<Vec<u8>> {
         .decrypt(std::iter::once(&identity as &dyn age::Identity))
         .map_err(|e| match e {
             age::DecryptError::DecryptionFailed | age::DecryptError::NoMatchingKeys => {
-                AppError::Validation("wrong password for this backup".into())
+                AppError::Validation(format!("wrong password for this {what}"))
             }
-            e => AppError::Validation(format!("cannot decrypt the backup: {e}")),
+            e => AppError::Validation(format!("cannot decrypt the {what}: {e}")),
         })?;
     let mut out = Vec::new();
     reader
         .read_to_end(&mut out)
-        .map_err(|e| AppError::Validation(format!("the backup file is damaged: {e}")))?;
+        .map_err(|e| AppError::Validation(format!("the {what} file is damaged: {e}")))?;
     Ok(out)
 }
 
@@ -269,7 +273,7 @@ pub struct Bundle {
 
 impl Bundle {
     pub fn read(path: &Path, password: &SecretString) -> AppResult<Self> {
-        let plain = decrypt(&std::fs::read(path)?, password)?;
+        let plain = decrypt(&std::fs::read(path)?, password, "backup")?;
         let damaged = |what: String| AppError::Validation(format!("the backup is damaged: {what}"));
         let mut zip =
             zip::ZipArchive::new(Cursor::new(plain)).map_err(|e| damaged(e.to_string()))?;

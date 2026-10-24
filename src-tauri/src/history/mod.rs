@@ -19,7 +19,6 @@ use crate::error::AppResult;
 pub enum Source {
     User,
     Sync,
-    #[allow(dead_code)] // M8
     Import,
     /// Restores from a backup and undo from history.
     Restore,

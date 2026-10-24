@@ -14,6 +14,7 @@ use crate::db::groups::{self, GroupInput};
 use crate::db::hosts::{self, Directive, HostField, HostInput};
 use crate::db::now;
 use crate::error::{AppError, AppResult};
+use crate::scripts::{self, ScriptInput};
 use crate::settings::{self, Settings};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -67,7 +68,10 @@ fn entity(e: &AuditEntry) -> AppResult<EntityType> {
 
 /// Can this entry be undone / restored at all? (Shown as disabled buttons otherwise.)
 pub fn supported(e: &AuditEntry) -> bool {
-    matches!(e.entity_type.as_str(), "host" | "group" | "settings")
+    matches!(
+        e.entity_type.as_str(),
+        "host" | "group" | "settings" | "script"
+    )
 }
 
 fn group_exists(tx: &Transaction, id: &str) -> AppResult<bool> {
@@ -75,6 +79,30 @@ fn group_exists(tx: &Transaction, id: &str) -> AppResult<bool> {
         .query_row("SELECT 1 FROM groups WHERE id = ?1", [id], |_| Ok(()))
         .optional()?
         .is_some())
+}
+
+fn script_exists(tx: &Transaction, id: &str) -> AppResult<bool> {
+    Ok(tx
+        .query_row("SELECT 1 FROM scripts WHERE id = ?1", [id], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
+fn apply_script(tx: &Transaction, id: &str, snapshot: Option<&serde_json::Value>) -> AppResult<()> {
+    let Some(value) = snapshot else {
+        if script_exists(tx, id)? {
+            scripts::delete(tx, id, Source::Restore)?;
+        }
+        return Ok(());
+    };
+    let input: ScriptInput = serde_json::from_value(value.clone())
+        .map_err(|e| AppError::Other(format!("unreadable script snapshot: {e}")))?;
+    if script_exists(tx, id)? {
+        scripts::update(tx, id, input, Source::Restore)?;
+    } else {
+        scripts::create_with_id(tx, id, input, Source::Restore)?;
+    }
+    Ok(())
 }
 
 fn host_exists(tx: &Transaction, id: &str) -> AppResult<bool> {
@@ -201,6 +229,9 @@ fn current(tx: &Transaction, kind: EntityType, id: &str) -> AppResult<Option<ser
             Some(serde_json::to_value(groups::get(tx, id)?)?)
         }
         EntityType::Settings => Some(serde_json::to_value(settings::load(tx)?)?),
+        EntityType::Script if script_exists(tx, id)? => {
+            Some(serde_json::to_value(scripts::get(tx, id)?)?)
+        }
         _ => None,
     })
 }
@@ -245,7 +276,8 @@ fn apply(tx: &Transaction, e: &AuditEntry, target: Target) -> AppResult<()> {
                 .map_err(|e| AppError::Other(format!("unreadable settings snapshot: {e}")))?;
             settings::save(tx, s).map(|_| ())
         }
-        EntityType::Tag | EntityType::Backup | EntityType::Script => Err(AppError::Validation(
+        EntityType::Script => apply_script(tx, &e.entity_id, snapshot),
+        EntityType::Tag | EntityType::Backup => Err(AppError::Validation(
             "this kind of change cannot be undone".into(),
         )),
     }

@@ -193,6 +193,8 @@ then encrypted with `age` passphrase mode.
 - Import: decrypt → preview table → per-item strategy: skip / overwrite / import as copy; group mapping. Auto-backup first. Imported connection data lands in DB as pending config changes → user applies via the guarded write.
 - Extra: import a plain `ssh_config` file from another machine; export selected hosts as a plain config snippet (unencrypted, explicit).
 
+**As built (M8)**: an `.rsexport` is an age-encrypted (scrypt) JSON document rather than a zip, so `age -d` opens it as readable text. Hosts are matched by alias and scripts by name. Each item is _new_, _already here_ or _differs_ (with the differing fields listed). New items can be imported or skipped; existing ones can be skipped, overwritten (the host keeps its local group) or imported as a copy (`alias-2`). Imported groups are matched by name under the chosen parent and created only when a host needs them. The import is one history batch, so it can be undone, and it runs after a strict auto-backup. Key files are opt-in on export. On import they are written only inside `~/.ssh` and only where no file exists. The plain config export refuses to write over the live config or its includes.
+
 ## 11. History
 
 - **Audit log**: every create/update/delete with before/after JSON, grouped by `batch_id` (e.g., one import = one batch). Per-host timeline in the host details panel, global history view with filters.

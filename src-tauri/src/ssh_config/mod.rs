@@ -211,6 +211,26 @@ pub fn load(path: &Path) -> AppResult<ParsedConfig> {
     Ok(out)
 }
 
+/// Parses one config file on its own, without following `Include` (used for files from
+/// another machine, whose include paths mean nothing here).
+pub fn parse_single(path: &Path, text: &str) -> ParsedConfig {
+    let mut out = ParsedConfig::default();
+    let file = ConfigFile::parse(path, text);
+    for block in &file.blocks {
+        for line in file.directives(block) {
+            if line.keyword().as_deref() == Some("include") {
+                out.warnings.push(format!(
+                    "Include {} was not followed; import that file separately",
+                    line.value().unwrap_or("")
+                ));
+            }
+        }
+        collect_block(&file, block, &mut out);
+    }
+    out.files.push(file);
+    out
+}
+
 pub fn read_text(path: &Path) -> AppResult<String> {
     decode(path, std::fs::read(path)?)
 }
