@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
+  DownloadIcon,
   ExternalLinkIcon,
   FolderInputIcon,
   PencilIcon,
+  PlayIcon,
   PlusIcon,
   RotateCcwIcon,
   SearchXIcon,
@@ -11,6 +13,7 @@ import {
   SquareTerminalIcon,
   StarIcon,
   Trash2Icon,
+  UploadIcon,
   XIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +86,13 @@ export function HostListPanel() {
             <div className="ml-auto flex items-center gap-1">
               {view !== "trash" && (
                 <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => useUiStore.getState().openScriptRun(checked.map((h) => h.id))}
+                  >
+                    <PlayIcon /> Run script
+                  </Button>
                   <MoveMenu
                     groups={groups}
                     onMove={(g) => move.mutate({ ids: checked.map((h) => h.id), groupId: g })}
@@ -225,6 +235,24 @@ function HostRow({ host, groups }: { host: Host; groups: Group[] }) {
               </ContextMenuItem>
               <ContextMenuItem onSelect={() => connectExternal(host)}>
                 <ExternalLinkIcon /> Open in external terminal
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => useUiStore.getState().openTransfer(host.id, "upload")}
+              >
+                <UploadIcon /> Upload files…
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => useUiStore.getState().openTransfer(host.id, "download")}
+              >
+                <DownloadIcon /> Download…
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  const { checkedIds, openScriptRun } = useUiStore.getState();
+                  openScriptRun(checkedIds.includes(host.id) ? checkedIds : [host.id]);
+                }}
+              >
+                <PlayIcon /> Run script…
               </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem onSelect={() => openHostForm(host.id)}>

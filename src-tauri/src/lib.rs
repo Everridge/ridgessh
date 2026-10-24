@@ -175,6 +175,14 @@ pub fn run() {
             commands::terminal::terminal_close,
             commands::terminal::terminal_open_external,
             commands::terminal::host_activity,
+            commands::jobs::transfer_open,
+            commands::jobs::transfer_last_remote,
+            commands::jobs::scripts_list,
+            commands::jobs::script_create,
+            commands::jobs::script_update,
+            commands::jobs::script_delete,
+            commands::jobs::script_read_file,
+            commands::jobs::script_open,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

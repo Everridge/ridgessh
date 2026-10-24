@@ -30,7 +30,7 @@ fn display_command(args: &[String]) -> String {
         .join(" ")
 }
 
-fn live_host(state: &AppState, host_id: &str) -> AppResult<hosts::Host> {
+pub(crate) fn live_host(state: &AppState, host_id: &str) -> AppResult<hosts::Host> {
     let host = state.db.tx(|tx| hosts::get(tx, host_id))?;
     if host.deleted_at.is_some() {
         return Err(AppError::Conflict(
@@ -55,14 +55,44 @@ pub fn terminal_open(
     let ssh = find_tool("ssh")?;
     let args = target_args(&host)?;
     let command = display_command(&args);
-    let activity_id = state.db.tx(|tx| {
-        activity::start(
-            tx,
-            &host.id,
-            "terminal",
-            serde_json::json!({ "command": command }),
-        )
-    })?;
+    let job = Job {
+        host: &host,
+        program: &ssh,
+        args,
+        kind: "terminal",
+        details: serde_json::json!({ "command": command }),
+        command,
+    };
+    spawn_job(app, &state, job, (cols, rows), on_data, on_exit)
+}
+
+/// A process to run in a terminal tab for a host, recorded in the activity log.
+pub(crate) struct Job<'a> {
+    pub host: &'a hosts::Host,
+    pub program: &'a std::path::Path,
+    pub args: Vec<String>,
+    /// Activity kind (`terminal`, `scp_up`, `scp_down`, `script`).
+    pub kind: &'static str,
+    pub details: serde_json::Value,
+    /// Shown at the top of the tab.
+    pub command: String,
+}
+
+pub(crate) fn spawn_job(
+    app: AppHandle,
+    state: &AppState,
+    job: Job<'_>,
+    (cols, rows): (u16, u16),
+    on_data: Channel,
+    on_exit: Channel<TerminalExit>,
+) -> AppResult<TerminalOpened> {
+    let host = job.host;
+    let command = job.command;
+    let kind = job.kind;
+    let activity_id = state
+        .db
+        .tx(|tx| activity::start(tx, &host.id, kind, job.details))?;
+    let (ssh, args) = (job.program, job.args);
 
     let finished = move |code: Option<u32>| {
         let state = app.state::<AppState>();
@@ -75,7 +105,7 @@ pub fn terminal_open(
     };
     let session_id = state.terminals.spawn(
         SpawnRequest {
-            program: &ssh,
+            program: ssh,
             args,
             cols,
             rows,
@@ -84,7 +114,7 @@ pub fn terminal_open(
         on_exit,
         finished,
     )?;
-    tracing::info!(host = %host.alias, "terminal opened");
+    tracing::info!(host = %host.alias, kind, "terminal job started");
     Ok(TerminalOpened {
         session_id,
         command,

@@ -303,6 +303,45 @@ export interface RestoreResult {
   report: SyncReport;
 }
 
+export interface TransferSpec {
+  hostId: string;
+  direction: "upload" | "download";
+  /** Upload: files/folders to send. Download: one local folder to save into. */
+  local: string[];
+  remote: string;
+  recursive: boolean;
+}
+
+export type RunMode = "stream" | "copy";
+
+export interface Script {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  interpreter: string;
+  defaultArgs: string;
+  runMode: RunMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ScriptInput = Pick<
+  Script,
+  "name" | "description" | "content" | "interpreter" | "defaultArgs" | "runMode"
+>;
+
+/** A library script (`scriptId`) or ad-hoc content, for one host. */
+export interface ScriptRun {
+  hostId: string;
+  scriptId?: string | null;
+  name?: string | null;
+  content?: string | null;
+  interpreter?: string | null;
+  mode?: RunMode | null;
+  args: string;
+}
+
 export interface TerminalOpened {
   sessionId: string;
   command: string;
@@ -392,6 +431,26 @@ export const api = {
     invoke<void>("terminal_resize", { sessionId, cols, rows }),
   terminalClose: (sessionId: string) => invoke<void>("terminal_close", { sessionId }),
   terminalOpenExternal: (hostId: string) => invoke<void>("terminal_open_external", { hostId }),
+  transferOpen: (
+    spec: TransferSpec,
+    cols: number,
+    rows: number,
+    onData: Channel<ArrayBuffer>,
+    onExit: Channel<TerminalExit>,
+  ) => invoke<TerminalOpened>("transfer_open", { spec, cols, rows, onData, onExit }),
+  transferLastRemote: (hostId: string) => invoke<string | null>("transfer_last_remote", { hostId }),
+  scriptsList: () => invoke<Script[]>("scripts_list"),
+  scriptCreate: (input: ScriptInput) => invoke<Script>("script_create", { input }),
+  scriptUpdate: (id: string, input: ScriptInput) => invoke<Script>("script_update", { id, input }),
+  scriptDelete: (id: string) => invoke<void>("script_delete", { id }),
+  scriptReadFile: (path: string) => invoke<string>("script_read_file", { path }),
+  scriptOpen: (
+    run: ScriptRun,
+    cols: number,
+    rows: number,
+    onData: Channel<ArrayBuffer>,
+    onExit: Channel<TerminalExit>,
+  ) => invoke<TerminalOpened>("script_open", { run, cols, rows, onData, onExit }),
   hostActivity: (hostId: string, limit?: number) =>
     invoke<Activity[]>("host_activity", { hostId, limit }),
 };

@@ -37,6 +37,15 @@ pub fn find_tool(name: &str) -> AppResult<PathBuf> {
 /// it, get their RidgeSSH values as `-o` options (command-line options take precedence over
 /// the config file in OpenSSH).
 pub fn target_args(host: &Host) -> AppResult<Vec<String>> {
+    let (mut args, destination) = host_options(host)?;
+    args.push("--".to_string());
+    args.push(destination);
+    Ok(args)
+}
+
+/// The `-o` overrides for `host` (see [`target_args`]) and the destination alias, separately,
+/// for tools that put more arguments between them (scp, remote commands).
+pub fn host_options(host: &Host) -> AppResult<(Vec<String>, String)> {
     let destination = host
         .config_snapshot
         .as_ref()
@@ -68,9 +77,12 @@ pub fn target_args(host: &Host) -> AppResult<Vec<String>> {
             opt(&d.key, d.value.clone());
         }
     }
-    args.push("--".to_string());
-    args.push(destination.to_string());
-    Ok(args)
+    Ok((args, destination.to_string()))
+}
+
+/// Quotes one word for a POSIX shell on the remote side: `it's` → `'it'\''s'`.
+pub fn posix_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 #[cfg(test)]
@@ -218,7 +230,7 @@ mod real_ssh {
 }
 
 #[cfg(test)]
-mod tests_support {
+pub(crate) mod tests_support {
     pub fn host() -> crate::db::hosts::Host {
         super::tests::host_for_tests()
     }

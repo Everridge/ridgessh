@@ -1,8 +1,10 @@
 import {
+  ArrowUpDownIcon,
   ExternalLinkIcon,
   FileCodeIcon,
   MousePointerClickIcon,
   PencilIcon,
+  PlayIcon,
   RotateCcwIcon,
   SquareTerminalIcon,
   StarIcon,
@@ -89,6 +91,24 @@ function Details({ host }: { host: Host }) {
                 onClick={() => connectExternal(host)}
               >
                 <ExternalLinkIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Copy files"
+                title="Copy files (scp)"
+                onClick={() => useUiStore.getState().openTransfer(host.id, "upload")}
+              >
+                <ArrowUpDownIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Run script"
+                title="Run script"
+                onClick={() => useUiStore.getState().openScriptRun([host.id])}
+              >
+                <PlayIcon />
               </Button>
               <Button
                 variant="ghost"

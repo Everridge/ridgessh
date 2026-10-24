@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useTerminalStore } from "./store";
+import { parseProgress, useTerminalStore } from "./store";
 
 const s = () => useTerminalStore.getState();
 
@@ -33,5 +33,14 @@ describe("terminal store", () => {
     s().setStatus(a, "exited", 255);
     s().reconnect(a);
     expect(s().tabs[0]).toMatchObject({ status: "connecting", exitCode: null, generation: 1 });
+  });
+});
+
+describe("scp progress", () => {
+  it("takes the last percentage in a chunk", () => {
+    expect(parseProgress("a.txt   12%  1KB\ra.txt   57%  4KB")).toBe(57);
+    expect(parseProgress("no progress here")).toBeNull();
+    expect(parseProgress("weird 250%")).toBeNull();
+    expect(parseProgress("a.txt 100% 4KB 1.0MB/s 00:00")).toBe(100);
   });
 });

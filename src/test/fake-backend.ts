@@ -15,6 +15,8 @@ import type {
   HostInput,
   RenameSuggestion,
   RestoreOptions,
+  Script,
+  ScriptInput,
   Settings,
   SettingsView,
   SyncReport,
@@ -36,6 +38,10 @@ export interface FakeSeed {
   backups?: { fileName: string; password: string }[];
   /** Extra audit entries, oldest first. */
   history?: Omit<AuditEntry, "id">[];
+  scripts?: Script[];
+  lastRemote?: string;
+  /** What the native file/folder picker returns. */
+  dialogResult?: string | string[];
 }
 
 export function installFakeBackend(seed: FakeSeed = {}) {
@@ -48,6 +54,7 @@ export function installFakeBackend(seed: FakeSeed = {}) {
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let renames = [...(seed.renames ?? [])];
   let lastSync: SyncReport | null = null;
+  let scripts: Script[] = [...(seed.scripts ?? [])];
   let settings: Settings = {
     backupDir: null,
     confirmationWord: "CONFIRM",
@@ -175,6 +182,32 @@ export function installFakeBackend(seed: FakeSeed = {}) {
       case "history_revert":
       case "history_revert_batch":
         return args.batchId ? 1 : null;
+      case "scripts_list":
+        return [...scripts];
+      case "script_create": {
+        const s: Script = {
+          id: id(),
+          ...(args.input as ScriptInput),
+          createdAt: now(),
+          updatedAt: now(),
+        };
+        scripts.push(s);
+        return s;
+      }
+      case "script_update": {
+        const s = scripts.find((x) => x.id === args.id)!;
+        Object.assign(s, args.input, { updatedAt: now() });
+        return s;
+      }
+      case "script_delete":
+        scripts = scripts.filter((x) => x.id !== args.id);
+        return null;
+      case "script_read_file":
+        return "echo from file\n";
+      case "transfer_last_remote":
+        return seed.lastRemote ?? null;
+      case "plugin:dialog|open":
+        return seed.dialogResult ?? null;
       case "hosts_empty_trash": {
         const trashed = hosts.filter((h) => h.deletedAt);
         for (const h of trashed) hosts.splice(hosts.indexOf(h), 1);

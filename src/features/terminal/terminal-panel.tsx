@@ -1,9 +1,18 @@
-import { PlusIcon, RotateCwIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import {
+  ArrowDownToLineIcon,
+  ArrowUpFromLineIcon,
+  FileCode2Icon,
+  PlusIcon,
+  RotateCwIcon,
+  SquareIcon,
+  SquareTerminalIcon,
+  XIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/ui";
-import { useTerminalStore, type TabStatus } from "./store";
+import { useTerminalStore, type TabStatus, type TerminalTab } from "./store";
 import { TerminalView } from "./terminal-view";
 
 const STATUS_DOT: Record<TabStatus, string> = {
@@ -14,7 +23,7 @@ const STATUS_DOT: Record<TabStatus, string> = {
 };
 
 export function TerminalPanel() {
-  const { tabs, activeId, activate, close, reconnect } = useTerminalStore();
+  const { tabs, activeId, activate, close, reconnect, stop } = useTerminalStore();
   const openQuickConnect = useUiStore((s) => s.setQuickConnectOpen);
   const active = tabs.find((t) => t.id === activeId);
 
@@ -48,7 +57,11 @@ export function TerminalPanel() {
               )}
             >
               <span className={cn("size-1.5 shrink-0 rounded-full", STATUS_DOT[t.status])} />
+              <JobIcon tab={t} />
               <span className="truncate">{t.title}</span>
+              {t.job.kind === "transfer" && t.progress !== null && (
+                <span className="shrink-0 text-muted-foreground tabular-nums">{t.progress}%</span>
+              )}
               <button
                 type="button"
                 aria-label={`Close ${t.title}`}
@@ -63,9 +76,14 @@ export function TerminalPanel() {
             </div>
           ))}
         </div>
+        {active && active.job.kind !== "ssh" && active.status === "open" && (
+          <Button variant="ghost" size="xs" onClick={() => stop(active.id)}>
+            <SquareIcon /> Stop
+          </Button>
+        )}
         {active && (active.status === "exited" || active.status === "error") && (
           <Button variant="ghost" size="xs" onClick={() => reconnect(active.id)}>
-            <RotateCwIcon /> Reconnect
+            <RotateCwIcon /> {active.job.kind === "ssh" ? "Reconnect" : "Run again"}
           </Button>
         )}
         <Tooltip>
@@ -95,4 +113,16 @@ export function TerminalPanel() {
       </div>
     </section>
   );
+}
+
+function JobIcon({ tab }: { tab: TerminalTab }) {
+  const cls = "size-3 shrink-0 text-muted-foreground";
+  if (tab.job.kind === "script") return <FileCode2Icon className={cls} aria-label="Script" />;
+  if (tab.job.kind === "transfer")
+    return tab.job.spec.direction === "upload" ? (
+      <ArrowUpFromLineIcon className={cls} aria-label="Upload" />
+    ) : (
+      <ArrowDownToLineIcon className={cls} aria-label="Download" />
+    );
+  return null;
 }

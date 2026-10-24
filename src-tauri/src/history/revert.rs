@@ -245,7 +245,7 @@ fn apply(tx: &Transaction, e: &AuditEntry, target: Target) -> AppResult<()> {
                 .map_err(|e| AppError::Other(format!("unreadable settings snapshot: {e}")))?;
             settings::save(tx, s).map(|_| ())
         }
-        EntityType::Tag | EntityType::Backup => Err(AppError::Validation(
+        EntityType::Tag | EntityType::Backup | EntityType::Script => Err(AppError::Validation(
             "this kind of change cannot be undone".into(),
         )),
     }

@@ -5,6 +5,7 @@ import {
   ClockIcon,
   FolderIcon,
   FolderPlusIcon,
+  FileCode2Icon,
   HistoryIcon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -163,6 +164,15 @@ export function AppSidebar() {
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Scripts"
+              onClick={() => useUiStore.getState().setScriptsOpen(true)}
+            >
+              <FileCode2Icon />
+              <span>Scripts</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton tooltip="History" onClick={() => setHistoryOpen(true)}>
               <HistoryIcon />

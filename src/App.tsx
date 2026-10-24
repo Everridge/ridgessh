@@ -9,7 +9,10 @@ import { BackupsDialog } from "@/features/backup/backups-dialog";
 import { RestoreDialog } from "@/features/backup/restore-dialog";
 import { ConfigWriteDialog } from "@/features/config-write/config-write-dialog";
 import { HistoryDialog } from "@/features/history/history-dialog";
+import { RunScriptDialog } from "@/features/scripts/run-script-dialog";
+import { ScriptsDialog } from "@/features/scripts/scripts-dialog";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
+import { TransferDialog } from "@/features/transfer/transfer-dialog";
 import { SyncReviewDialog } from "@/features/sync/sync-review-dialog";
 import { useStartupSync } from "@/features/sync/use-startup-sync";
 import { QuickConnect } from "@/features/terminal/quick-connect";
@@ -72,6 +75,9 @@ export default function App() {
       <RestoreDialog />
       <SettingsDialog />
       <HistoryDialog />
+      <TransferDialog />
+      <ScriptsDialog />
+      <RunScriptDialog />
       <QuickConnect />
     </SidebarProvider>
   );

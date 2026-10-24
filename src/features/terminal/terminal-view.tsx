@@ -10,7 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useTheme } from "@/components/theme-provider";
 import { invalidateAll } from "@/features/hosts/queries";
 import { api, errorMessage, type TerminalExit } from "@/lib/ipc";
-import { useTerminalStore, type TerminalTab } from "./store";
+import { parseProgress, useTerminalStore, type TerminalTab } from "./store";
 
 const DARK: ITheme = {
   background: "#0a0a0a",
@@ -67,7 +67,8 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
         useTerminalStore.getState().tabs.find((x) => x.id === tab.id)?.status === "connecting"
       ) {
         pending.current.push(data);
-      } else if (data === "\r") {
+      } else if (data === "\r" && tab.job.kind === "ssh") {
+        // Only sessions reconnect on Enter; transfers and scripts re-run via the button.
         useTerminalStore.getState().reconnect(tab.id);
       }
     };
@@ -125,31 +126,56 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
       t.dispose();
       term.current = null;
     };
-  }, [tab.id]);
+  }, [tab.id, tab.job.kind]); // the kind never changes for a tab
 
   // A session per generation (first connect and every reconnect).
   useEffect(() => {
     const t = term.current!;
-    const { setStatus } = useTerminalStore.getState();
+    const { setStatus, setProgress } = useTerminalStore.getState();
+    const job = tab.job;
     let disposed = false;
     pending.current = [];
 
+    const decoder = new TextDecoder();
     const onData = new Channel<ArrayBuffer>();
-    onData.onmessage = (buf) => t.write(new Uint8Array(buf));
+    onData.onmessage = (buf) => {
+      const bytes = new Uint8Array(buf);
+      t.write(bytes);
+      if (job.kind === "transfer") {
+        const pct = parseProgress(decoder.decode(bytes, { stream: true }));
+        if (pct !== null) setProgress(tab.id, pct);
+      }
+    };
     const onExit = new Channel<TerminalExit>();
     onExit.onmessage = ({ exitCode }) => {
       session.current = null;
       if (disposed) return;
-      t.write(
-        `\r\n${dim(`[Session ended, exit code ${exitCode ?? "unknown"}. Press Enter to reconnect.]`)}\r\n`,
-      );
+      const code = exitCode ?? "unknown";
+      const msg =
+        job.kind === "ssh"
+          ? `[Session ended, exit code ${code}. Press Enter to reconnect.]`
+          : exitCode === 0
+            ? "[Finished successfully.]"
+            : `[Failed, exit code ${code}.]`;
+      t.write(`\r\n${exitCode === 0 || job.kind === "ssh" ? dim(msg) : red(msg)}\r\n`);
+      if (job.kind === "transfer" && exitCode === 0) setProgress(tab.id, 100);
       setStatus(tab.id, "exited", exitCode);
       invalidateAll(qc);
     };
 
-    if (tab.generation > 0) t.write(`\r\n${dim("[Reconnecting…]")}\r\n`);
-    api
-      .terminalOpen(tab.hostId, t.cols, t.rows, onData, onExit)
+    if (tab.generation > 0)
+      t.write(`\r\n${dim(job.kind === "ssh" ? "[Reconnecting…]" : "[Running again…]")}\r\n`);
+    const start = (cols: number, rows: number) => {
+      switch (job.kind) {
+        case "ssh":
+          return api.terminalOpen(tab.hostId, cols, rows, onData, onExit);
+        case "transfer":
+          return api.transferOpen(job.spec, cols, rows, onData, onExit);
+        case "script":
+          return api.scriptOpen(job.run, cols, rows, onData, onExit);
+      }
+    };
+    start(t.cols, t.rows)
       .then(({ sessionId, command }) => {
         if (disposed) {
           void api.terminalClose(sessionId).catch(() => {});
@@ -164,7 +190,7 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
       .catch((e) => {
         if (disposed) return;
         t.write(
-          `\r\n${red(`Could not start ssh: ${errorMessage(e)}`)}\r\n${dim("Press Enter to retry.")}\r\n`,
+          `\r\n${red(`Could not start: ${errorMessage(e)}`)}\r\n${dim(job.kind === "ssh" ? "Press Enter to retry." : "Fix the problem, then use Run again.")}\r\n`,
         );
         setStatus(tab.id, "error");
       });
@@ -174,11 +200,17 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
       if (session.current) void api.terminalClose(session.current).catch(() => {});
       session.current = null;
     };
-  }, [tab.id, tab.hostId, tab.generation, qc]);
+  }, [tab.id, tab.hostId, tab.job, tab.generation, qc]);
 
   useEffect(() => {
     if (term.current) term.current.options.theme = resolvedTheme === "dark" ? DARK : LIGHT;
   }, [resolvedTheme]);
+
+  // "Stop": end the process; the exit message and output stay in the tab.
+  useEffect(() => {
+    if (tab.stopSignal > 0 && session.current)
+      void api.terminalClose(session.current).catch(() => {});
+  }, [tab.stopSignal]);
 
   useEffect(() => {
     if (!active) return;

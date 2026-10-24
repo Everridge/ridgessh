@@ -187,6 +187,16 @@ pub fn backup_dir(tx: &Transaction, paths: &AppPaths) -> AppResult<PathBuf> {
         .unwrap_or_else(|| paths.default_backup_dir.clone()))
 }
 
+/// Small per-host conveniences (e.g. the last remote folder used for uploads). Not part of
+/// [`Settings`] and not recorded in history.
+pub fn pref(tx: &Transaction, key: &str) -> AppResult<Option<String>> {
+    get(tx, &format!("pref:{key}"))
+}
+
+pub fn set_pref(tx: &Transaction, key: &str, value: &str) -> AppResult<()> {
+    put(tx, &format!("pref:{key}"), &value)
+}
+
 #[cfg(test)]
 pub fn set<T: Serialize>(tx: &Transaction, key: &str, value: &T) -> AppResult<()> {
     put(tx, key, value)

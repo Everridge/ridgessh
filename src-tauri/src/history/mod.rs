@@ -35,6 +35,7 @@ pub enum EntityType {
     Tag,
     Settings,
     Backup,
+    Script,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
