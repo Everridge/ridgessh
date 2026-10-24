@@ -1,0 +1,94 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { api, errorMessage, type GroupInput, type HostInput } from "@/lib/ipc";
+
+export const keys = {
+  hosts: ["hosts"] as const,
+  groups: ["groups"] as const,
+  tags: ["tags"] as const,
+  hostHistory: (id: string) => ["host-history", id] as const,
+};
+
+// Stable fallback so `data ?? EMPTY` does not change identity on every render.
+const EMPTY: never[] = [];
+
+export const useHosts = () => useQuery({ queryKey: keys.hosts, queryFn: api.hostsList });
+export const useGroups = () => useQuery({ queryKey: keys.groups, queryFn: api.groupsList });
+export const useTags = () => useQuery({ queryKey: keys.tags, queryFn: api.tagsList });
+
+export const useHostsData = () => useHosts().data ?? EMPTY;
+export const useGroupsData = () => useGroups().data ?? EMPTY;
+export const useTagsData = () => useTags().data ?? EMPTY;
+export const useHostHistory = (id: string) =>
+  useQuery({ queryKey: keys.hostHistory(id), queryFn: () => api.hostHistory(id) });
+
+/** Mutation that refreshes all host-related data and toasts errors. */
+function useDataMutation<V, R>(fn: (v: V) => Promise<R>, success?: (r: R, v: V) => string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (r, v) => {
+      const msg = success?.(r, v);
+      if (msg) toast.success(msg);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: keys.hosts });
+      void qc.invalidateQueries({ queryKey: keys.groups });
+      void qc.invalidateQueries({ queryKey: keys.tags });
+      void qc.invalidateQueries({ queryKey: ["host-history"] });
+    },
+  });
+}
+
+export const useCreateHost = () =>
+  useDataMutation(
+    (input: HostInput) => api.hostCreate(input),
+    (h) => `Host "${h.alias}" created`,
+  );
+
+export const useUpdateHost = () =>
+  useDataMutation(
+    ({ id, input }: { id: string; input: HostInput }) => api.hostUpdate(id, input),
+    (h) => `Host "${h.alias}" saved`,
+  );
+
+export const useSetFavorite = () =>
+  useDataMutation(({ id, favorite }: { id: string; favorite: boolean }) =>
+    api.hostSetFavorite(id, favorite),
+  );
+
+export const useMoveHosts = () =>
+  useDataMutation(({ ids, groupId }: { ids: string[]; groupId: string | null }) =>
+    api.hostsMove(ids, groupId),
+  );
+
+// No success toast: callers show one with an Undo action (see host-actions.tsx).
+export const useDeleteHosts = () => useDataMutation((ids: string[]) => api.hostsDelete(ids));
+
+export const useRestoreHost = () =>
+  useDataMutation(
+    (id: string) => api.hostRestore(id),
+    (h) => `Host "${h.alias}" restored`,
+  );
+
+export const usePurgeHost = () =>
+  useDataMutation(
+    (id: string) => api.hostPurge(id),
+    () => "Host permanently deleted",
+  );
+
+export const useCreateGroup = () =>
+  useDataMutation(
+    (input: GroupInput) => api.groupCreate(input),
+    (g) => `Group "${g.name}" created`,
+  );
+
+export const useUpdateGroup = () =>
+  useDataMutation(({ id, input }: { id: string; input: GroupInput }) => api.groupUpdate(id, input));
+
+export const useDeleteGroup = () =>
+  useDataMutation(
+    (id: string) => api.groupDelete(id),
+    () => "Group deleted",
+  );

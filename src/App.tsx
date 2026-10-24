@@ -2,6 +2,7 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { TopBar } from "@/components/layout/top-bar";
 import { HostDetailsPanel } from "@/features/hosts/host-details-panel";
 import { HostListPanel } from "@/features/hosts/host-list-panel";
+import { HostFormDialog } from "@/features/hosts/host-form-dialog";
 import { TerminalPanel } from "@/features/terminal/terminal-panel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -30,6 +31,7 @@ export default function App() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>
+      <HostFormDialog />
     </SidebarProvider>
   );
 }

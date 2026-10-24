@@ -10,13 +10,13 @@ Lightweight desktop SSH connection manager (Tauri 2 + React + shadcn/ui). See [d
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `pnpm install` | install frontend deps |
-| `pnpm tauri dev` | run the app with hot reload |
-| `pnpm tauri build` | build NSIS + MSI installers |
-| `pnpm check` | typecheck, lint, frontend tests, clippy, Rust tests |
-| `pnpm format` / `pnpm rust:fmt` | format frontend / Rust code |
+| Command                         | What it does                                        |
+| ------------------------------- | --------------------------------------------------- |
+| `pnpm install`                  | install frontend deps                               |
+| `pnpm tauri dev`                | run the app with hot reload                         |
+| `pnpm tauri build`              | build NSIS + MSI installers                         |
+| `pnpm check`                    | typecheck, lint, frontend tests, clippy, Rust tests |
+| `pnpm format` / `pnpm rust:fmt` | format frontend / Rust code                         |
 
 Add shadcn components with `pnpm dlx shadcn@latest add <name>`.
 

@@ -6,8 +6,17 @@ pub enum AppError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("validation failed: {0}")]
+    #[error("database error: {0}")]
+    Db(#[from] rusqlite::Error),
+
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("{0}")]
     Validation(String),
+
+    #[error("{0}")]
+    Conflict(String),
 
     #[error("not found: {0}")]
     NotFound(String),
@@ -20,7 +29,10 @@ impl AppError {
     fn kind(&self) -> &'static str {
         match self {
             AppError::Io(_) => "io",
+            AppError::Db(_) => "db",
+            AppError::Json(_) => "json",
             AppError::Validation(_) => "validation",
+            AppError::Conflict(_) => "conflict",
             AppError::NotFound(_) => "not_found",
             AppError::Other(_) => "other",
         }
