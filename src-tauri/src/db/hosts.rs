@@ -516,6 +516,36 @@ pub fn purge(tx: &Transaction, id: &str, source: Source) -> AppResult<()> {
     )
 }
 
+/// Is this trashed host's block still in ~/.ssh/config? Purging it would only make the next
+/// scan import it again, so housekeeping leaves such hosts alone.
+pub fn still_in_config(h: &Host) -> bool {
+    h.config_snapshot.is_some() && h.sync_state != "removed_from_config"
+}
+
+/// Permanently deletes trashed hosts (all of them, or those trashed before `older_than`),
+/// except ones still in the config. Returns the aliases purged and how many were kept.
+pub fn purge_trash(
+    tx: &Transaction,
+    older_than: Option<&str>,
+    source: Source,
+) -> AppResult<(Vec<String>, usize)> {
+    let mut purged = Vec::new();
+    let mut kept = 0;
+    for h in list(tx)?.into_iter().filter(|h| h.deleted_at.is_some()) {
+        let old_enough = older_than.is_none_or(|cutoff| h.deleted_at.as_deref() < Some(cutoff));
+        if !old_enough {
+            continue;
+        }
+        if still_in_config(&h) {
+            kept += 1;
+            continue;
+        }
+        purge(tx, &h.id, source)?;
+        purged.push(h.alias);
+    }
+    Ok((purged, kept))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

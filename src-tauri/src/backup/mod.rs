@@ -97,6 +97,8 @@ pub enum Reason {
     Periodic,
     #[allow(dead_code)] // M8
     Import,
+    /// Before undoing changes from history.
+    Revert,
 }
 
 impl Reason {
@@ -109,6 +111,7 @@ impl Reason {
             Reason::Sync => "sync",
             Reason::Periodic => "periodic",
             Reason::Import => "import",
+            Reason::Revert => "revert",
         }
     }
 }

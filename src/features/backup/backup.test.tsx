@@ -120,7 +120,7 @@ describe("backups", () => {
       await within(dialog).findByText(/remembered in windows credential manager/i),
     ).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("tab", { name: /ssh config/i }));
+    await user.click(within(dialog).getByRole("tab", { name: /config & trash/i }));
     const word = within(dialog).getByLabelText(/confirmation word/i);
     await user.clear(word);
     await user.type(word, "OVERWRITE");

@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   ExternalLinkIcon,
   FolderInputIcon,
@@ -40,8 +41,9 @@ import { buildGroupTree, filterHosts, flattenTree, groupPath } from "./filter";
 import { connectionLabel } from "./format";
 import { useHostActions, usePurgeConfirm } from "./host-actions";
 import { SyncBadges } from "./host-badges";
-import { useGroupsData, useHosts, useMoveHosts, useSetFavorite } from "./queries";
+import { useEmptyTrash, useGroupsData, useHosts, useMoveHosts, useSetFavorite } from "./queries";
 import { useConnect } from "@/features/terminal/use-connect";
+import { stillInConfig } from "@/features/config-write/pending";
 
 const VIEW_TITLES: Record<Exclude<HostView, "group">, string> = {
   all: "All hosts",
@@ -106,10 +108,12 @@ export function HostListPanel() {
             <Badge variant="secondary" className="tabular-nums">
               {hosts.length}
             </Badge>
-            {view !== "trash" && (
+            {view !== "trash" ? (
               <Button size="sm" className="ml-auto" onClick={() => openHostForm("new")}>
                 <PlusIcon /> New host
               </Button>
+            ) : (
+              hosts.length > 0 && <EmptyTrashButton hosts={hosts} />
             )}
           </>
         )}
@@ -333,5 +337,45 @@ function Empty({
       </div>
       {children}
     </div>
+  );
+}
+
+function EmptyTrashButton({ hosts }: { hosts: Host[] }) {
+  const [open, setOpen] = useState(false);
+  const empty = useEmptyTrash();
+  const inConfig = hosts.filter(stillInConfig).length;
+  const purgeable = hosts.length - inConfig;
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="ml-auto text-destructive"
+        disabled={purgeable === 0}
+        title={purgeable === 0 ? "Every host here is still in ~/.ssh/config" : undefined}
+        onClick={() => setOpen(true)}
+      >
+        <Trash2Icon /> Empty trash
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={`Permanently delete ${purgeable} host${purgeable === 1 ? "" : "s"}?`}
+        description={
+          <>
+            Their notes, tags and custom fields are removed. The change history keeps a copy, so
+            they can still be brought back from History.
+            {inConfig > 0 &&
+              ` ${inConfig} host${inConfig === 1 ? " is" : "s are"} still in ~/.ssh/config and stay in trash (remove ${inConfig === 1 ? "it" : "them"} from the config with Write config first).`}
+          </>
+        }
+        confirmLabel="Delete permanently"
+        destructive
+        onConfirm={() => {
+          empty.mutate();
+          setOpen(false);
+        }}
+      />
+    </>
   );
 }

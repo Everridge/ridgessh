@@ -105,6 +105,18 @@ pub fn run() {
             if dangling > 0 {
                 tracing::info!(dangling, "closed sessions left open by a previous run");
             }
+            let (purged, _) = db.tx(|tx| {
+                let days = settings::load(tx)?.trash_retention_days;
+                if days == 0 {
+                    return Ok((Vec::new(), 0));
+                }
+                let cutoff = chrono::Utc::now() - chrono::Duration::days(i64::from(days));
+                let cutoff = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                db::hosts::purge_trash(tx, Some(&cutoff), history::Source::System)
+            })?;
+            if !purged.is_empty() {
+                tracing::info!(count = purged.len(), "old hosts removed from trash");
+            }
             app.manage(AppState {
                 paths,
                 db,
@@ -127,6 +139,10 @@ pub fn run() {
             commands::hosts::host_restore,
             commands::hosts::host_purge,
             commands::hosts::host_history,
+            commands::hosts::hosts_empty_trash,
+            commands::history::history_list,
+            commands::history::history_revert,
+            commands::history::history_revert_batch,
             commands::groups::groups_list,
             commands::groups::group_create,
             commands::groups::group_update,

@@ -52,6 +52,7 @@ impl Db {
     /// anything?").
     pub fn dry_run<T>(&self, f: impl FnOnce(&Transaction) -> AppResult<T>) -> AppResult<T> {
         let _guard = TxGuard::enter()?;
+        let _batch = crate::history::begin_batch();
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         f(&tx)
@@ -93,6 +94,8 @@ impl Db {
     /// rejected with an error instead.
     pub fn tx<T>(&self, f: impl FnOnce(&Transaction) -> AppResult<T>) -> AppResult<T> {
         let _guard = TxGuard::enter()?;
+        // Everything recorded in one transaction is one undoable batch.
+        let _batch = crate::history::begin_batch();
         let mut conn = self
             .conn
             .lock()

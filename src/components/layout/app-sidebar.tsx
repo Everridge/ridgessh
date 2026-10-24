@@ -78,6 +78,7 @@ export function AppSidebar() {
   const deleteGroup = useDeleteGroup();
   const setBackupsOpen = useUiStore((s) => s.setBackupsOpen);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
+  const setHistoryOpen = useUiStore((s) => s.setHistoryOpen);
   const backup = useBackupStatus().data;
   const backupWarning = !backup
     ? null
@@ -163,7 +164,7 @@ export function AppSidebar() {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip="History" disabled>
+            <SidebarMenuButton tooltip="History" onClick={() => setHistoryOpen(true)}>
               <HistoryIcon />
               <span>History</span>
             </SidebarMenuButton>

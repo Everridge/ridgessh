@@ -8,6 +8,7 @@ import { HostFormDialog } from "@/features/hosts/host-form-dialog";
 import { BackupsDialog } from "@/features/backup/backups-dialog";
 import { RestoreDialog } from "@/features/backup/restore-dialog";
 import { ConfigWriteDialog } from "@/features/config-write/config-write-dialog";
+import { HistoryDialog } from "@/features/history/history-dialog";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { SyncReviewDialog } from "@/features/sync/sync-review-dialog";
 import { useStartupSync } from "@/features/sync/use-startup-sync";
@@ -70,6 +71,7 @@ export default function App() {
       <BackupsDialog />
       <RestoreDialog />
       <SettingsDialog />
+      <HistoryDialog />
       <QuickConnect />
     </SidebarProvider>
   );

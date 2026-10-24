@@ -6,6 +6,7 @@ interface UiState {
   view: HostView;
   /** Selected group when `view === "group"`. */
   groupId: string | null;
+  historyOpen: boolean;
   settingsOpen: boolean;
   backupsOpen: boolean;
   /** Backup file being restored (from the list or picked from disk). */
@@ -33,6 +34,7 @@ interface UiState {
   setQuickConnectOpen: (open: boolean) => void;
   openConfigWrite: (focus?: string[]) => void;
   closeConfigWrite: () => void;
+  setHistoryOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setBackupsOpen: (open: boolean) => void;
   setRestoreTarget: (target: { path: string; name: string } | null) => void;
@@ -49,6 +51,7 @@ export const useUiStore = create<UiState>((set) => ({
   syncReviewOpen: false,
   quickConnectOpen: false,
   configWrite: null,
+  historyOpen: false,
   settingsOpen: false,
   backupsOpen: false,
   restoreTarget: null,
@@ -69,6 +72,7 @@ export const useUiStore = create<UiState>((set) => ({
   setQuickConnectOpen: (quickConnectOpen) => set({ quickConnectOpen }),
   openConfigWrite: (focus) => set({ configWrite: { focus: focus ?? null } }),
   closeConfigWrite: () => set({ configWrite: null }),
+  setHistoryOpen: (historyOpen) => set({ historyOpen }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setBackupsOpen: (backupsOpen) => set({ backupsOpen }),
   setRestoreTarget: (restoreTarget) => set({ restoreTarget }),

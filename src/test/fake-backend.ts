@@ -10,6 +10,7 @@ import type {
   ConfigPreview,
   Group,
   GroupInput,
+  HistoryFilter,
   Host,
   HostInput,
   RenameSuggestion,
@@ -33,6 +34,8 @@ export interface FakeSeed {
   rememberedPassword?: string;
   /** Existing backup files and the password each was made with. */
   backups?: { fileName: string; password: string }[];
+  /** Extra audit entries, oldest first. */
+  history?: Omit<AuditEntry, "id">[];
 }
 
 export function installFakeBackend(seed: FakeSeed = {}) {
@@ -52,6 +55,7 @@ export function installFakeBackend(seed: FakeSeed = {}) {
     autoBackupIntervalMin: 30,
     retentionCount: 30,
     retentionDays: 0,
+    trashRetentionDays: 30,
     ...seed.settings,
   };
   let remembered: string | null = seed.rememberedPassword ?? null;
@@ -68,18 +72,26 @@ export function installFakeBackend(seed: FakeSeed = {}) {
     defaultBackupDir: "C:\\data\\backups",
   });
 
-  const log = (entityId: string, action: AuditEntry["action"], before: unknown, after: unknown) =>
+  const log = (
+    entityId: string,
+    action: AuditEntry["action"],
+    before: unknown,
+    after: unknown,
+    batchId: string | null = `batch-${audit.length + 1}`,
+  ) =>
     audit.unshift({
       id: audit.length + 1,
       ts: now(),
-      batchId: null,
+      batchId,
       source: "user",
       entityType: "host",
       entityId,
       action,
+      label: String(((after ?? before) as { alias?: string } | null)?.alias ?? entityId),
       before: before as AuditEntry["before"],
       after: after as AuditEntry["after"],
     });
+  for (const e of seed.history ?? []) audit.unshift({ ...e, id: audit.length + 1 });
 
   const find = (hid: string) => {
     const h = hosts.find((x) => x.id === hid);
@@ -151,6 +163,23 @@ export function installFakeBackend(seed: FakeSeed = {}) {
         return null;
       case "host_history":
         return audit.filter((e) => e.entityId === args.id);
+      case "history_list": {
+        const f = (args.filter ?? {}) as HistoryFilter;
+        return audit.filter(
+          (e) =>
+            (!f.entityType || e.entityType === f.entityType) &&
+            (!f.source || e.source === f.source) &&
+            (!f.search || JSON.stringify(e).includes(f.search)),
+        );
+      }
+      case "history_revert":
+      case "history_revert_batch":
+        return args.batchId ? 1 : null;
+      case "hosts_empty_trash": {
+        const trashed = hosts.filter((h) => h.deletedAt);
+        for (const h of trashed) hosts.splice(hosts.indexOf(h), 1);
+        return { purged: trashed.length, keptInConfig: 0 };
+      }
       case "groups_list":
         return structuredClone(groups);
       case "group_create": {

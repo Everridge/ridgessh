@@ -4,6 +4,7 @@ pub mod app;
 pub mod backup;
 pub mod config;
 pub mod groups;
+pub mod history;
 pub mod hosts;
 pub mod sync;
 pub mod tags;

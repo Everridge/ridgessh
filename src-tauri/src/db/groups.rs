@@ -81,6 +81,16 @@ fn validate(tx: &Transaction, id: Option<&str>, input: &GroupInput) -> AppResult
 }
 
 pub fn create(tx: &Transaction, input: &GroupInput, source: Source) -> AppResult<Group> {
+    create_with_id(tx, &new_id(), input, source)
+}
+
+/// Creates a group with a given id (used when undoing its deletion).
+pub fn create_with_id(
+    tx: &Transaction,
+    id: &str,
+    input: &GroupInput,
+    source: Source,
+) -> AppResult<Group> {
     let name = validate(tx, None, input)?;
     let ts = now();
     let sort_order: i64 = tx.query_row(
@@ -89,7 +99,7 @@ pub fn create(tx: &Transaction, input: &GroupInput, source: Source) -> AppResult
         |r| r.get(0),
     )?;
     let group = Group {
-        id: new_id(),
+        id: id.to_string(),
         parent_id: input.parent_id.clone(),
         name,
         color: input.color.clone(),
@@ -143,17 +153,37 @@ pub fn update(tx: &Transaction, id: &str, input: &GroupInput, source: Source) ->
     Ok(after)
 }
 
-/// Deletes a group. Its subgroups and hosts move up to the deleted group's parent.
+/// Deletes a group. Its subgroups and hosts move up to the deleted group's parent. Each move
+/// is recorded first, so undoing the batch recreates the group and moves everything back.
 pub fn delete(tx: &Transaction, id: &str, source: Source) -> AppResult<()> {
     let group = get(tx, id)?;
-    tx.execute(
-        "UPDATE groups SET parent_id = ?2 WHERE parent_id = ?1",
-        params![id, group.parent_id],
-    )?;
-    tx.execute(
-        "UPDATE hosts SET group_id = ?2, updated_at = ?3 WHERE group_id = ?1",
-        params![id, group.parent_id, now()],
-    )?;
+    let children: Vec<Group> = list(tx)?
+        .into_iter()
+        .filter(|g| g.parent_id.as_deref() == Some(id))
+        .collect();
+    for child in children {
+        tx.execute(
+            "UPDATE groups SET parent_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params![child.id, group.parent_id, now()],
+        )?;
+        let after = get(tx, &child.id)?;
+        history::record(
+            tx,
+            source,
+            EntityType::Group,
+            &child.id,
+            Action::Update,
+            Some(&child),
+            Some(&after),
+        )?;
+    }
+    let host_ids: Vec<String> = tx
+        .prepare("SELECT id FROM hosts WHERE group_id = ?1")?
+        .query_map([id], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    if !host_ids.is_empty() {
+        crate::db::hosts::patch_meta(tx, &host_ids, None, Some(group.parent_id.clone()), source)?;
+    }
     tx.execute("DELETE FROM groups WHERE id = ?1", [id])?;
     history::record(
         tx,

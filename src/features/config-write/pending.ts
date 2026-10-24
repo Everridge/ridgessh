@@ -29,3 +29,7 @@ export function opAction(op: ConfigOp, host?: Host): string {
   if (op === "remove") return "Remove from config…";
   return host?.syncState === "removed_from_config" ? "Restore into config…" : "Add to config…";
 }
+
+/** A trashed host whose block is still in ~/.ssh/config (mirrors `hosts::still_in_config`). */
+export const stillInConfig = (h: Host) =>
+  h.configSnapshot !== null && h.syncState !== "removed_from_config";

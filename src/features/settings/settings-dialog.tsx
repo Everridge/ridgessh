@@ -67,7 +67,7 @@ function SettingsForm({ view, onClose }: { view: SettingsView; onClose: () => vo
       <Tabs defaultValue="backups" className="min-h-0 flex-1">
         <TabsList>
           <TabsTrigger value="backups">Backups</TabsTrigger>
-          <TabsTrigger value="config">SSH config</TabsTrigger>
+          <TabsTrigger value="config">Config & trash</TabsTrigger>
           <TabsTrigger value="about">About</TabsTrigger>
         </TabsList>
         <ScrollArea className="min-h-0 flex-1">
@@ -145,6 +145,16 @@ function SettingsForm({ view, onClose }: { view: SettingsView; onClose: () => vo
           </TabsContent>
 
           <TabsContent value="config" className="grid gap-6 py-3 pr-3">
+            <Section title="Trash">
+              <div className="max-w-xs">
+                <NumberField
+                  label="Delete hosts from trash after (days)"
+                  hint="0 = keep forever. Hosts still in ~/.ssh/config are never deleted automatically."
+                  value={s.trashRetentionDays}
+                  onChange={(v) => set("trashRetentionDays", v)}
+                />
+              </div>
+            </Section>
             <Section title="Confirmation word">
               <Input
                 value={s.confirmationWord}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { stillInConfig } from "@/features/config-write/pending";
 import type { Host } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
 import { useDeleteHosts, usePurgeHost, useRestoreHost } from "./queries";
@@ -45,7 +46,11 @@ export function usePurgeConfirm() {
       open={host !== null}
       onOpenChange={(o) => !o && setHost(null)}
       title={`Permanently delete "${host?.alias}"?`}
-      description="Its notes, custom fields and tags are removed from RidgeSSH. The change history is kept. This does not touch ~/.ssh/config."
+      description={
+        host && stillInConfig(host)
+          ? "This host is still in ~/.ssh/config, so the next config scan would add it again as a new host. Remove it from the config first (Write config), or keep it in trash."
+          : "Its notes, custom fields and tags are removed from RidgeSSH. History keeps a copy, so it can be brought back from there. This does not touch ~/.ssh/config."
+      }
       confirmLabel="Delete permanently"
       destructive
       onConfirm={() => {

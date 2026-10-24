@@ -30,6 +30,8 @@ export function invalidateAll(qc: QueryClient) {
     keys.backupStatus,
     keys.backups,
     ["host-history"],
+    ["history"],
+    keys.settings,
   ]) {
     void qc.invalidateQueries({ queryKey });
   }
@@ -127,4 +129,11 @@ export const useDeleteGroup = () =>
   useDataMutation(
     (id: string) => api.groupDelete(id),
     () => "Group deleted",
+  );
+
+export const useEmptyTrash = () =>
+  useDataMutation(api.hostsEmptyTrash, ({ purged, keptInConfig }) =>
+    keptInConfig > 0
+      ? `Deleted ${purged} host${purged === 1 ? "" : "s"}; ${keptInConfig} still in ~/.ssh/config stayed in trash`
+      : `Deleted ${purged} host${purged === 1 ? "" : "s"} permanently`,
   );

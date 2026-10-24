@@ -12,6 +12,10 @@ use crate::paths::AppPaths;
 
 pub const DEFAULT_CONFIRMATION_WORD: &str = "CONFIRM";
 
+fn default_trash_days() -> u32 {
+    30
+}
+
 /// Every user-editable setting. Missing keys fall back to [`Settings::default`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +32,9 @@ pub struct Settings {
     pub retention_count: u32,
     /// Also delete automatic backups older than this many days (0 = no age limit).
     pub retention_days: u32,
+    /// Hosts in trash longer than this many days are deleted permanently (0 = never).
+    #[serde(default = "default_trash_days")]
+    pub trash_retention_days: u32,
 }
 
 impl Default for Settings {
@@ -39,6 +46,7 @@ impl Default for Settings {
             auto_backup_interval_min: 30,
             retention_count: 30,
             retention_days: 0,
+            trash_retention_days: default_trash_days(),
         }
     }
 }
@@ -76,6 +84,7 @@ pub fn load(tx: &Transaction) -> AppResult<Settings> {
             .unwrap_or(d.auto_backup_interval_min),
         retention_count: get(tx, "retention_count")?.unwrap_or(d.retention_count),
         retention_days: get(tx, "retention_days")?.unwrap_or(d.retention_days),
+        trash_retention_days: get(tx, "trash_retention_days")?.unwrap_or(d.trash_retention_days),
     })
 }
 
@@ -98,6 +107,11 @@ fn validate(s: &mut Settings) -> AppResult<()> {
     if !(1..=1000).contains(&s.retention_count) {
         return Err(AppError::Validation(
             "keep between 1 and 1000 automatic backups".into(),
+        ));
+    }
+    if s.trash_retention_days > 3650 {
+        return Err(AppError::Validation(
+            "the trash limit is at most 3650 days".into(),
         ));
     }
     if s.retention_days > 3650 {
@@ -145,6 +159,7 @@ pub fn save(tx: &Transaction, mut s: Settings) -> AppResult<Settings> {
     put(tx, "auto_backup_interval_min", &s.auto_backup_interval_min)?;
     put(tx, "retention_count", &s.retention_count)?;
     put(tx, "retention_days", &s.retention_days)?;
+    put(tx, "trash_retention_days", &s.trash_retention_days)?;
     let after = load(tx)?;
     if after != before {
         history::record(
@@ -205,6 +220,7 @@ mod tests {
             auto_backup_interval_min: 0,
             retention_count: 5,
             retention_days: 7,
+            trash_retention_days: 0,
         };
         let saved = db.tx(|tx| save(tx, wanted.clone())).unwrap();
         assert_eq!(saved.confirmation_word, "WRITE");

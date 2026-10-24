@@ -90,3 +90,24 @@ pub fn host_history(
         .db
         .tx(|tx| history::for_entity(tx, EntityType::Host, &id, limit.unwrap_or(100)))
 }
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyTrashResult {
+    pub purged: usize,
+    /// Trashed hosts still in ~/.ssh/config, left in trash.
+    pub kept_in_config: usize,
+}
+
+/// Permanently deletes everything in trash except hosts still in ~/.ssh/config.
+#[tauri::command]
+pub async fn hosts_empty_trash(state: State<'_, AppState>) -> AppResult<EmptyTrashResult> {
+    state.auto_backup(Reason::BulkDelete)?;
+    let (purged, kept_in_config) = state
+        .db
+        .tx(|tx| hosts::purge_trash(tx, None, Source::User))?;
+    Ok(EmptyTrashResult {
+        purged: purged.len(),
+        kept_in_config,
+    })
+}

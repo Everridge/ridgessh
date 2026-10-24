@@ -27,6 +27,13 @@ const LABELS: Record<string, string> = {
   fields: "Custom fields",
   name: "Name",
   parentId: "Parent",
+  backupDir: "Backup folder",
+  confirmationWord: "Confirmation word",
+  autoBackup: "Automatic backups",
+  autoBackupIntervalMin: "Backup interval (min)",
+  retentionCount: "Backups kept",
+  retentionDays: "Backup age limit (days)",
+  trashRetentionDays: "Trash kept (days)",
 };
 
 export function fieldLabel(field: string): string {

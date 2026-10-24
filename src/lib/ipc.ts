@@ -150,14 +150,27 @@ export interface RenameSuggestion {
   toId: string;
 }
 
+export type HistorySource = "user" | "sync" | "import" | "restore" | "system";
+
+export interface HistoryFilter {
+  entityType?: AuditEntry["entityType"] | null;
+  source?: HistorySource | null;
+  search?: string | null;
+  /** Page cursor: entries older than this id. */
+  beforeId?: number | null;
+  limit?: number;
+}
+
 export interface AuditEntry {
   id: number;
   ts: string;
   batchId: string | null;
-  source: "user" | "sync" | "import" | "restore";
-  entityType: string;
+  source: HistorySource;
+  entityType: "host" | "group" | "tag" | "settings" | "backup";
   entityId: string;
   action: "create" | "update" | "delete" | "restore" | "purge";
+  /** Host alias, group name, "Settings", backup file. */
+  label: string;
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;
 }
@@ -226,6 +239,8 @@ export interface Settings {
   retentionCount: number;
   /** 0 = no age limit. */
   retentionDays: number;
+  /** Trashed hosts are deleted permanently after this many days (0 = never). */
+  trashRetentionDays: number;
 }
 
 export interface SettingsView {
@@ -313,6 +328,13 @@ export const api = {
   hostRestore: (id: string) => invoke<Host>("host_restore", { id }),
   hostPurge: (id: string) => invoke<void>("host_purge", { id }),
   hostHistory: (id: string, limit?: number) => invoke<AuditEntry[]>("host_history", { id, limit }),
+  hostsEmptyTrash: () => invoke<{ purged: number; keptInConfig: number }>("hosts_empty_trash"),
+
+  historyList: (filter: HistoryFilter) => invoke<AuditEntry[]>("history_list", { filter }),
+  /** `before` undoes the change, `after` goes back to the version it produced. */
+  historyRevert: (id: number, target: "before" | "after") =>
+    invoke<void>("history_revert", { id, target }),
+  historyRevertBatch: (batchId: string) => invoke<number>("history_revert_batch", { batchId }),
 
   groupsList: () => invoke<Group[]>("groups_list"),
   groupCreate: (input: GroupInput) => invoke<Group>("group_create", { input }),
