@@ -242,6 +242,8 @@ shadcn pieces: Sidebar, Resizable, DataTable, Dialog/Sheet, Command (Ctrl+K), Ta
 | M9  | Release (Windows)    | NSIS installer, single-instance, window state, updater, code signing                                             |
 | M10 | macOS                | keychain, `0600` perms, `/usr/bin/ssh`, notarization                                                             |
 
+**As built (M9)**: a per-user NSIS installer (no admin rights; downloads WebView2 if it is missing). The updater plugin reads `latest.json` from the latest published GitHub release and checks its minisign signature. The public key is in `tauri.conf.json`; the private key and its password are kept outside the repo and stored as CI secrets. The app checks once on startup (there is a setting to turn this off) and again whenever the user clicks "Check now" in Settings → About. The update dialog shows the release notes and warns when terminal sessions are open. The NSIS installer then runs in passive mode and the app restarts. Before a newer schema is applied, the database is copied to `db.v<N>.bak`, and a database from a newer version is refused instead of being opened. Releases: `pnpm version:bump X.Y.Z` → `CHANGELOG.md` section → tag `vX.Y.Z` → the `release.yml` workflow builds the installer and creates a draft release. The draft becomes visible to the updater once it is published. Authenticode signing uses Azure Trusted Signing; it is switched on by repository variables and secrets, and builds are unsigned until those are set.
+
 Critical path: **M2 parser** (must be lossless — the one place a bug can damage the user's real config) and **M4 write path**. Both get heavy unit + golden-file tests before any write is enabled.
 
 ## 15. Decisions taken (change if you disagree)

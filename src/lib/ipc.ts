@@ -241,6 +241,8 @@ export interface Settings {
   retentionDays: number;
   /** Trashed hosts are deleted permanently after this many days (0 = never). */
   trashRetentionDays: number;
+  /** Look for a new release on startup. */
+  checkUpdates: boolean;
 }
 
 export interface SettingsView {

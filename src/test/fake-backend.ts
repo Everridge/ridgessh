@@ -73,6 +73,7 @@ export function installFakeBackend(seed: FakeSeed = {}) {
     retentionCount: 30,
     retentionDays: 0,
     trashRetentionDays: 30,
+    checkUpdates: true,
     ...seed.settings,
   };
   let remembered: string | null = seed.rememberedPassword ?? null;

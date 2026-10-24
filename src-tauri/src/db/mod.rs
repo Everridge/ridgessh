@@ -13,13 +13,14 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::error::{AppError, AppResult};
 
-static MIGRATIONS: LazyLock<Migrations<'static>> = LazyLock::new(|| {
-    Migrations::new(vec![
-        M::up(include_str!("migrations/001_init.sql")),
-        M::up(include_str!("migrations/002_config_tracking.sql")),
-        M::up(include_str!("migrations/003_drop_backups_table.sql")),
-    ])
-});
+const MIGRATION_SQL: &[&str] = &[
+    include_str!("migrations/001_init.sql"),
+    include_str!("migrations/002_config_tracking.sql"),
+    include_str!("migrations/003_drop_backups_table.sql"),
+];
+
+static MIGRATIONS: LazyLock<Migrations<'static>> =
+    LazyLock::new(|| Migrations::new(MIGRATION_SQL.iter().map(|sql| M::up(sql)).collect()));
 
 /// Single shared connection. The app is single-user and low-traffic, so a mutex is enough.
 pub struct Db {
@@ -30,6 +31,21 @@ impl Db {
     pub fn open(path: &Path) -> AppResult<Self> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        let version = usize::try_from(version).unwrap_or(usize::MAX);
+        if version > MIGRATION_SQL.len() {
+            return Err(AppError::Other(format!(
+                "the database at {} was created by a newer version of RidgeSSH;                  install that version or restore a backup",
+                path.display()
+            )));
+        }
+        if version > 0 && version < MIGRATION_SQL.len() {
+            // An app update is about to change the schema: keep a copy of the old one.
+            let copy = path.with_extension(format!("v{version}.bak"));
+            let _ = std::fs::remove_file(&copy);
+            conn.execute("VACUUM INTO ?1", [copy.to_string_lossy()])?;
+            tracing::info!(from = version, copy = %copy.display(), "upgrading database schema");
+        }
         Self::init(conn)
     }
 
@@ -153,6 +169,28 @@ mod tests {
     #[test]
     fn migrations_are_valid() {
         super::MIGRATIONS.validate().unwrap();
+    }
+
+    #[test]
+    fn upgrade_keeps_a_copy_and_newer_databases_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("db.sqlite");
+        {
+            let mut conn = rusqlite::Connection::open(&file).unwrap();
+            rusqlite_migration::Migrations::new(vec![rusqlite_migration::M::up(
+                super::MIGRATION_SQL[0],
+            )])
+            .to_latest(&mut conn)
+            .unwrap();
+        }
+        drop(super::Db::open(&file).unwrap());
+        assert!(dir.path().join("db.v1.bak").is_file());
+
+        let conn = rusqlite::Connection::open(&file).unwrap();
+        conn.pragma_update(None, "user_version", 99).unwrap();
+        drop(conn);
+        let err = super::Db::open(&file).err().unwrap().to_string();
+        assert!(err.contains("newer version"), "{err}");
     }
 
     #[test]

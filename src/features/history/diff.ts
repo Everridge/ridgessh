@@ -34,6 +34,7 @@ const LABELS: Record<string, string> = {
   retentionCount: "Backups kept",
   retentionDays: "Backup age limit (days)",
   trashRetentionDays: "Trash kept (days)",
+  checkUpdates: "Check for updates",
 };
 
 export function fieldLabel(field: string): string {

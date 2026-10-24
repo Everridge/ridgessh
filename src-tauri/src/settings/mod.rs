@@ -16,6 +16,10 @@ fn default_trash_days() -> u32 {
     30
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Every user-editable setting. Missing keys fall back to [`Settings::default`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +39,9 @@ pub struct Settings {
     /// Hosts in trash longer than this many days are deleted permanently (0 = never).
     #[serde(default = "default_trash_days")]
     pub trash_retention_days: u32,
+    /// Look for a new release on startup.
+    #[serde(default = "default_true")]
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -47,6 +54,7 @@ impl Default for Settings {
             retention_count: 30,
             retention_days: 0,
             trash_retention_days: default_trash_days(),
+            check_updates: true,
         }
     }
 }
@@ -85,6 +93,7 @@ pub fn load(tx: &Transaction) -> AppResult<Settings> {
         retention_count: get(tx, "retention_count")?.unwrap_or(d.retention_count),
         retention_days: get(tx, "retention_days")?.unwrap_or(d.retention_days),
         trash_retention_days: get(tx, "trash_retention_days")?.unwrap_or(d.trash_retention_days),
+        check_updates: get(tx, "check_updates")?.unwrap_or(d.check_updates),
     })
 }
 
@@ -160,6 +169,7 @@ pub fn save(tx: &Transaction, mut s: Settings) -> AppResult<Settings> {
     put(tx, "retention_count", &s.retention_count)?;
     put(tx, "retention_days", &s.retention_days)?;
     put(tx, "trash_retention_days", &s.trash_retention_days)?;
+    put(tx, "check_updates", &s.check_updates)?;
     let after = load(tx)?;
     if after != before {
         history::record(
@@ -231,6 +241,7 @@ mod tests {
             retention_count: 5,
             retention_days: 7,
             trash_retention_days: 0,
+            check_updates: false,
         };
         let saved = db.tx(|tx| save(tx, wanted.clone())).unwrap();
         assert_eq!(saved.confirmation_word, "WRITE");

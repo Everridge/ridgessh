@@ -1,0 +1,69 @@
+# Builds the Windows installer for a version tag and drafts a GitHub release with it.
+# Publishing the draft is what makes the in-app updater offer the new version.
+#
+# Secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD (updater signature).
+# Optional Authenticode signing with Azure Trusted Signing: repository variables
+# AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE and secrets
+# AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID. Without them the installer is unsigned.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Check the tag matches the app version
+        run: node scripts/version.mjs check ${{ github.ref_name }}
+      - name: Release notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<NOTES_EOF'
+            node scripts/version.mjs notes ${{ github.ref_name }}
+            echo 'NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+      - run: pnpm check
+
+      - name: Set up code signing
+        if: ${{ vars.AZURE_SIGNING_ENDPOINT != '' }}
+        shell: bash
+        run: |
+          cargo install trusted-signing-cli --locked
+          cat > "$RUNNER_TEMP/signing.conf.json" <<JSON
+          {"bundle":{"windows":{"signCommand":"trusted-signing-cli -e ${{ vars.AZURE_SIGNING_ENDPOINT }} -a ${{ vars.AZURE_SIGNING_ACCOUNT }} -c ${{ vars.AZURE_SIGNING_PROFILE }} -d RidgeSSH %1"}}}
+          JSON
+          echo "TAURI_EXTRA_ARGS=--config $RUNNER_TEMP/signing.conf.json" >> "$GITHUB_ENV"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: RidgeSSH ${{ github.ref_name }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+          args: ${{ env.TAURI_EXTRA_ARGS }}

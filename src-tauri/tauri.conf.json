@@ -26,13 +26,40 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true,
+    "publisher": "Everridge",
+    "copyright": "© 2026 Everridge",
+    "category": "DeveloperTool",
+    "shortDescription": "SSH connection manager",
+    "longDescription": "Manage SSH hosts, groups, backups and terminals on top of your ~/.ssh/config.",
+    "homepage": "https://github.com/Everridge/ridgessh",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English"],
+        "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE1RTA0NDlFREQwQUU0QTcKUldTbjVBcmRua1RnRmRvOCs2cU1HZ0NRZDNFbkE2eFc0WitNWThwN2YwbHNzc2UwZWZnWFBkeE0K",
+      "endpoints": ["https://github.com/Everridge/ridgessh/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

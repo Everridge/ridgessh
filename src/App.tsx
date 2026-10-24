@@ -14,6 +14,8 @@ import { ExportDialog } from "@/features/export-import/export-dialog";
 import { ImportDialog } from "@/features/export-import/import-dialog";
 import { ScriptsDialog } from "@/features/scripts/scripts-dialog";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
+import { UpdateDialog } from "@/features/updates/update-dialog";
+import { useStartupUpdateCheck } from "@/features/updates/use-startup-update-check";
 import { TransferDialog } from "@/features/transfer/transfer-dialog";
 import { SyncReviewDialog } from "@/features/sync/sync-review-dialog";
 import { useStartupSync } from "@/features/sync/use-startup-sync";
@@ -38,6 +40,7 @@ function useExpandTerminalOnOpen() {
 
 export default function App() {
   useStartupSync();
+  useStartupUpdateCheck();
   useQuickConnectShortcut();
   const terminalPanel = useExpandTerminalOnOpen();
 
@@ -82,6 +85,7 @@ export default function App() {
       <RunScriptDialog />
       <ExportDialog />
       <ImportDialog />
+      <UpdateDialog />
       <QuickConnect />
     </SidebarProvider>
   );

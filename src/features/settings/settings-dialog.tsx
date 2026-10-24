@@ -2,7 +2,13 @@ import { useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { CheckCircle2Icon, FolderOpenIcon, KeyRoundIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  CheckCircle2Icon,
+  FolderOpenIcon,
+  KeyRoundIcon,
+  RefreshCwIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -25,6 +31,7 @@ import {
   useSaveSettings,
   useSettings,
 } from "@/features/backup/queries";
+import { useUpdateStore } from "@/features/updates/store";
 import { api, type Settings, type SettingsView } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
 
@@ -38,7 +45,7 @@ export function SettingsDialog() {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Backups, the SSH config confirmation word, and app info.
+            Backups, the SSH config confirmation word, updates and app info.
           </DialogDescription>
         </DialogHeader>
         {/* Re-mount the form whenever the saved settings change. */}
@@ -170,8 +177,18 @@ function SettingsForm({ view, onClose }: { view: SettingsView; onClose: () => vo
             </Section>
           </TabsContent>
 
-          <TabsContent value="about" className="py-3 pr-3">
+          <TabsContent value="about" className="grid gap-6 py-3 pr-3">
             <About />
+            <Section title="Updates">
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={s.checkUpdates}
+                  onCheckedChange={(v) => set("checkUpdates", v === true)}
+                />
+                Check for updates when RidgeSSH starts
+              </label>
+              <UpdateCheck />
+            </Section>
           </TabsContent>
         </ScrollArea>
       </Tabs>
@@ -249,6 +266,31 @@ function About() {
         </div>
       ))}
     </dl>
+  );
+}
+
+function UpdateCheck() {
+  const { status, update, error, check, setDialogOpen } = useUpdateStore();
+  const run = () =>
+    check()
+      .then((u) => u && setDialogOpen(true))
+      .catch(() => undefined);
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button size="sm" variant="outline" disabled={status === "checking"} onClick={run}>
+        <RefreshCwIcon className={status === "checking" ? "animate-spin" : undefined} />
+        Check now
+      </Button>
+      <span className="text-sm text-muted-foreground" role="status">
+        {status === "none" && "RidgeSSH is up to date."}
+        {status === "error" && <span className="text-destructive">{error}</span>}
+        {update && status !== "none" && status !== "error" && (
+          <button type="button" className="underline" onClick={() => setDialogOpen(true)}>
+            Version {update.version} is available
+          </button>
+        )}
+      </span>
+    </div>
   );
 }
 
