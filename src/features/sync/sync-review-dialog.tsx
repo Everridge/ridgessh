@@ -3,6 +3,7 @@ import {
   ArrowRightIcon,
   CheckIcon,
   FileCodeIcon,
+  FileInputIcon,
   GitCompareIcon,
   RefreshCwIcon,
   Trash2Icon,
@@ -192,6 +193,11 @@ function NewList({ hosts }: { hosts: Host[] }) {
 function RemovedList({ hosts }: { hosts: Host[] }) {
   const keep = useKeepDbOnly();
   const { trash } = useHostActions();
+  // Hand over to the write dialog (one dialog at a time).
+  const restoreIntoConfig = (ids: string[]) => {
+    useUiStore.getState().setSyncReviewOpen(false);
+    useUiStore.getState().openConfigWrite(ids);
+  };
   if (!hosts.length) return <Nothing text="Nothing was removed from the config." />;
   return (
     <div className="grid gap-2">
@@ -216,6 +222,9 @@ function RemovedList({ hosts }: { hosts: Host[] }) {
             <span className="ml-auto shrink-0 text-xs text-muted-foreground">
               removed {formatTs(h.removedFromConfigAt)}
             </span>
+            <Button variant="ghost" size="sm" onClick={() => restoreIntoConfig([h.id])}>
+              <FileInputIcon /> Restore into config
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => keep.mutate([h.id])}>
               Keep in RidgeSSH
             </Button>

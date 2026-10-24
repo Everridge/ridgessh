@@ -47,18 +47,6 @@ impl SyncReport {
     }
 }
 
-fn to_connection(ch: &ConfigHost) -> Connection {
-    Connection {
-        alias: ch.alias.clone(),
-        hostname: ch.hostname.clone(),
-        user: ch.user.clone(),
-        port: ch.port,
-        identity_file: ch.identity_file.clone(),
-        proxy_jump: ch.proxy_jump.clone(),
-        extra_options: ch.extra_options.clone(),
-    }
-}
-
 /// The alias a DB host is known by in the config.
 fn config_key(h: &Host) -> &str {
     h.config_snapshot
@@ -139,7 +127,7 @@ pub fn run(tx: &Transaction, parsed: &ParsedConfig, main_path: &Path) -> AppResu
     let mut seen: HashSet<&str> = HashSet::new();
 
     for ch in &parsed.hosts {
-        let snapshot = to_connection(ch);
+        let snapshot = ch.connection();
         let source = (ch.source != main_path).then(|| ch.source.display().to_string());
 
         let Some(&h) = by_key.get(ch.alias.as_str()) else {

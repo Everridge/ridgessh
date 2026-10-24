@@ -1,5 +1,6 @@
 mod backup;
 mod commands;
+mod config_write;
 mod db;
 mod error;
 mod history;
@@ -98,6 +99,9 @@ pub fn run() {
             commands::sync::sync_keep_db_only,
             commands::sync::sync_resolve_conflict,
             commands::sync::sync_accept_rename,
+            commands::config::config_candidates,
+            commands::config::config_preview,
+            commands::config::config_apply,
             commands::terminal::terminal_open,
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,

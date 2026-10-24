@@ -1,6 +1,10 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
+import { offeredOp } from "@/features/config-write/pending";
 import type {
   AuditEntry,
+  ConfigCandidate,
+  ConfigChange,
+  ConfigPreview,
   Group,
   GroupInput,
   Host,
@@ -163,6 +167,67 @@ export function installFakeBackend(seed: FakeSeed = {}) {
         return lastSync;
       case "sync_last":
         return lastSync;
+      case "config_candidates":
+        return hosts.flatMap((h): ConfigCandidate[] => {
+          const op = offeredOp(h);
+          if (!op) return [];
+          const conflict = h.syncState === "conflict";
+          return [
+            {
+              hostId: h.id,
+              alias: h.alias,
+              op,
+              selected: op === "update" && !conflict,
+              blocked: conflict ? "Resolve the conflict with the config first." : null,
+            },
+          ];
+        });
+      case "config_preview": {
+        const changes = args.changes as ConfigChange[];
+        return {
+          configPath: "C:\\Users\\me\\.ssh\\config",
+          fileExists: true,
+          baseHash: "base",
+          resultHash: `result:${changes.map((c) => c.hostId).join(",")}`,
+          diff: changes.flatMap((c) => [
+            { kind: "hunk", text: "@@ -1,1 +1,2 @@", old: null, new: null },
+            { kind: "context", text: `Host ${find(c.hostId).alias}`, old: 1, new: 1 },
+            { kind: "add", text: "  Port 2222", old: null, new: 2 },
+          ]),
+          additions: changes.length,
+          deletions: 0,
+          confirmationWord: "CONFIRM",
+        } satisfies ConfigPreview;
+      }
+      case "config_apply": {
+        if (args.confirmation !== "CONFIRM")
+          throw { kind: "validation", message: "the confirmation word does not match" };
+        const changes = args.changes as ConfigChange[];
+        for (const c of changes) {
+          const h = find(c.hostId);
+          if (c.op === "remove") Object.assign(h, { syncState: "db_only", configSnapshot: null });
+          else
+            Object.assign(h, {
+              syncState: "synced",
+              configDirty: false,
+              configSnapshot: {
+                alias: h.alias,
+                hostname: h.hostname,
+                user: h.user,
+                port: h.port,
+                identityFile: h.identityFile,
+                proxyJump: h.proxyJump,
+                extraOptions: h.extraOptions,
+              },
+            });
+        }
+        return {
+          configPath: "C:\\Users\\me\\.ssh\\config",
+          backupPath: "C:\\data\\backups\\ssh-config\\config-1",
+          changed: changes.length,
+          report: lastSync,
+        };
+      }
       case "sync_rename_suggestions":
         return renames;
       case "sync_acknowledge":

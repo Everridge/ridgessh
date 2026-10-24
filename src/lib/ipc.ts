@@ -172,6 +172,47 @@ export interface Activity {
   details: { command?: string } | null;
 }
 
+/** What writing a host to ~/.ssh/config would do (see `src-tauri/src/config_write`). */
+export type ConfigOp = "update" | "add" | "remove";
+
+export interface ConfigChange {
+  hostId: string;
+  op: ConfigOp;
+}
+
+export interface ConfigCandidate extends ConfigChange {
+  alias: string;
+  /** Pre-selected: pending edits are, additions and removals are opt-in. */
+  selected: boolean;
+  /** Why it cannot be written right now. */
+  blocked: string | null;
+}
+
+export interface DiffLine {
+  kind: "hunk" | "context" | "add" | "remove";
+  text: string;
+  old: number | null;
+  new: number | null;
+}
+
+export interface ConfigPreview {
+  configPath: string;
+  fileExists: boolean;
+  baseHash: string;
+  resultHash: string;
+  diff: DiffLine[];
+  additions: number;
+  deletions: number;
+  confirmationWord: string;
+}
+
+export interface ConfigApplyResult {
+  configPath: string;
+  backupPath: string | null;
+  changed: number;
+  report: SyncReport;
+}
+
 export interface TerminalOpened {
   sessionId: string;
   command: string;
@@ -215,6 +256,15 @@ export const api = {
     invoke<Host>("sync_resolve_conflict", { id, keep }),
   syncAcceptRename: (fromId: string, toId: string) =>
     invoke<Host>("sync_accept_rename", { fromId, toId }),
+
+  configCandidates: () => invoke<ConfigCandidate[]>("config_candidates"),
+  configPreview: (changes: ConfigChange[]) => invoke<ConfigPreview>("config_preview", { changes }),
+  configApply: (
+    changes: ConfigChange[],
+    baseHash: string,
+    resultHash: string,
+    confirmation: string,
+  ) => invoke<ConfigApplyResult>("config_apply", { changes, baseHash, resultHash, confirmation }),
 
   terminalOpen: (
     hostId: string,

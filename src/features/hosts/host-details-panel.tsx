@@ -1,5 +1,6 @@
 import {
   ExternalLinkIcon,
+  FileCodeIcon,
   MousePointerClickIcon,
   PencilIcon,
   RotateCcwIcon,
@@ -16,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HostHistory } from "@/features/history/host-history";
 import type { Host } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
+import { offeredOp, opAction } from "@/features/config-write/pending";
 import { useUiStore } from "@/stores/ui";
 import { groupPath } from "./filter";
 import { connectionLabel, formatTs } from "./format";
@@ -147,6 +149,7 @@ function Details({ host }: { host: Host }) {
                   )}
                 </div>
                 {host.description && <p className="text-sm">{host.description}</p>}
+                <ConfigCallout host={host} />
                 {host.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1">
                     {host.tags.map((t) => (
@@ -195,7 +198,7 @@ function Details({ host }: { host: Host }) {
                 <Row label="SSH config" mono={false}>
                   {host.configSnapshot
                     ? host.configSource
-                      ? `In included file `
+                      ? `In ${host.configSource}`
                       : "In ~/.ssh/config"
                     : "Not in the config"}
                 </Row>
@@ -264,6 +267,35 @@ function Row({
       >
         {empty ? "—" : children}
       </dd>
+    </div>
+  );
+}
+
+const CALLOUT: Record<string, string> = {
+  update: "Connection changes are not in ~/.ssh/config yet.",
+  add: "Only in RidgeSSH, not in ~/.ssh/config.",
+  restore: "No longer in ~/.ssh/config. Its settings are kept here.",
+  remove: "In trash, but still in ~/.ssh/config.",
+};
+
+/** What this host could write to the config, with a shortcut into the write dialog. */
+function ConfigCallout({ host }: { host: Host }) {
+  const openWrite = useUiStore((s) => s.openConfigWrite);
+  const op = offeredOp(host);
+  if (!op || host.syncState === "conflict") return null;
+  const key = op === "add" && host.syncState === "removed_from_config" ? "restore" : op;
+  return (
+    <div
+      className={cn(
+        "mt-1 flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm",
+        op === "update" ? "border-violet-500/40 bg-violet-500/5" : "border-dashed",
+      )}
+    >
+      <FileCodeIcon className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 text-muted-foreground">{CALLOUT[key]}</span>
+      <Button size="xs" variant="outline" onClick={() => openWrite([host.id])}>
+        {opAction(op, host)}
+      </Button>
     </div>
   );
 }

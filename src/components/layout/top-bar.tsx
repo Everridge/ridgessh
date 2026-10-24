@@ -1,5 +1,6 @@
 import {
   FileCheckIcon,
+  FilePenLineIcon,
   MonitorIcon,
   MoonIcon,
   RefreshCwIcon,
@@ -12,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useHostsData } from "@/features/hosts/queries";
+import { isPendingWrite } from "@/features/config-write/pending";
 import { reviewItems, summarize } from "@/features/sync/compare";
 import { useRenameSuggestions, useRunSync } from "@/features/sync/queries";
 import { cn } from "@/lib/utils";
@@ -62,8 +64,32 @@ function SyncControls() {
   const attention =
     items.added.length + items.removed.length + items.conflicts.length + renames.length;
 
+  const openWrite = useUiStore((s) => s.openConfigWrite);
+  const pendingWrites = hosts.filter(isPendingWrite).length;
+
   return (
     <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="sm" onClick={() => openWrite()}>
+            <FilePenLineIcon />
+            Write config
+            {pendingWrites > 0 && (
+              <Badge
+                variant="outline"
+                className="h-4 border-violet-500/40 px-1 text-violet-700 tabular-nums dark:text-violet-400"
+              >
+                {pendingWrites}
+              </Badge>
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {pendingWrites > 0
+            ? `${pendingWrites} host${pendingWrites === 1 ? "" : "s"} with changes not yet in ~/.ssh/config`
+            : "Review and write changes to ~/.ssh/config"}
+        </TooltipContent>
+      </Tooltip>
       <Button variant="ghost" size="sm" onClick={() => openReview(true)}>
         <FileCheckIcon />
         Config review

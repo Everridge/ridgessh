@@ -15,6 +15,8 @@ interface UiState {
   /** Config sync review dialog. */
   syncReviewOpen: boolean;
   quickConnectOpen: boolean;
+  /** Write-to-config dialog: `null` closed; `focus` pre-selects only those hosts. */
+  configWrite: { focus: string[] | null } | null;
   setView: (view: Exclude<HostView, "group">) => void;
   setGroup: (groupId: string) => void;
   setSearch: (search: string) => void;
@@ -25,6 +27,8 @@ interface UiState {
   closeHostForm: () => void;
   setSyncReviewOpen: (open: boolean) => void;
   setQuickConnectOpen: (open: boolean) => void;
+  openConfigWrite: (focus?: string[]) => void;
+  closeConfigWrite: () => void;
 }
 
 /** Pure UI state. Backend data lives in TanStack Query, not here. */
@@ -37,6 +41,7 @@ export const useUiStore = create<UiState>((set) => ({
   hostForm: null,
   syncReviewOpen: false,
   quickConnectOpen: false,
+  configWrite: null,
   setView: (view) => set({ view, groupId: null, selectedHostId: null, checkedIds: [] }),
   setGroup: (groupId) => set({ view: "group", groupId, selectedHostId: null, checkedIds: [] }),
   setSearch: (search) => set({ search }),
@@ -52,4 +57,6 @@ export const useUiStore = create<UiState>((set) => ({
   closeHostForm: () => set({ hostForm: null }),
   setSyncReviewOpen: (syncReviewOpen) => set({ syncReviewOpen }),
   setQuickConnectOpen: (quickConnectOpen) => set({ quickConnectOpen }),
+  openConfigWrite: (focus) => set({ configWrite: { focus: focus ?? null } }),
+  closeConfigWrite: () => set({ configWrite: null }),
 }));

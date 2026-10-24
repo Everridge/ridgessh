@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::db::hosts::Host;
 use crate::error::{AppError, AppResult};
 use crate::security::validate_alias;
+use crate::ssh_config::lexer::quote_arg;
 
 /// Locates `ssh` (or `scp`). On Windows the inbox OpenSSH is preferred over e.g. Git's copy,
 /// so the same agent and config handling applies as in a normal terminal.
@@ -27,17 +28,6 @@ pub fn find_tool(name: &str) -> AppResult<PathBuf> {
             "{name} was not found. Install the OpenSSH client (Windows: Settings → System → Optional features)."
         ))
     })
-}
-
-/// Quotes a single value the way OpenSSH's config tokenizer (`argv_split`) expects:
-/// inside double quotes, `\\` and `\"` are the only escapes.
-pub fn quote_value(v: &str) -> String {
-    let special = |c: char| c.is_whitespace() || matches!(c, '"' | '\\' | '\'');
-    if v.is_empty() || v.contains(special) {
-        format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        v.to_string()
-    }
 }
 
 /// Destination plus `-o` overrides for `host`.
@@ -70,7 +60,7 @@ pub fn target_args(host: &Host) -> AppResult<Vec<String>> {
         ];
         for (key, value) in single {
             if let Some(v) = value {
-                opt(key, quote_value(&v));
+                opt(key, quote_arg(&v));
             }
         }
         // Other options are stored in config syntax already (possibly several arguments).
@@ -138,7 +128,7 @@ mod tests {
                 "-o",
                 "Port=2222",
                 "-o",
-                "IdentityFile=\"C:\\\\keys\\\\id ed\"",
+                "IdentityFile=\"C:\\keys\\id ed\"",
                 "-o",
                 "LocalForward=8080 localhost:80",
                 "--",

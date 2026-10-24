@@ -1,9 +1,10 @@
-//! Lossless ssh_config parser (M2). The writer that applies edits lands in M4.
+//! Lossless ssh_config parser (M2) and the edit engine used by the guarded writer (M4).
 //!
 //! A file is kept as its original lines plus a block structure on top. Untouched lines are
 //! never regenerated, so comments, ordering, spacing, `Match` blocks and line endings survive.
 
 pub mod lexer;
+pub mod writer;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::db::hosts::Directive;
+use crate::db::hosts::{Connection, Directive};
 use crate::error::{AppError, AppResult};
 use crate::security::validate_alias;
 use lexer::{Line, LineKind, split_args, unquote};
@@ -55,7 +56,6 @@ pub struct ConfigFile {
     /// Per line: was it terminated by CRLF (vs LF)? Keeps mixed-ending files lossless.
     pub crlf: Vec<bool>,
     /// Dominant ending, used for lines RidgeSSH adds.
-    #[allow(dead_code)] // used by the config writer (M4)
     pub line_ending: LineEnding,
     pub bom: bool,
     pub trailing_newline: bool,
@@ -104,7 +104,6 @@ impl ConfigFile {
     }
 
     /// Reproduces the file. For an unmodified file this equals the original text.
-    #[cfg_attr(not(test), allow(dead_code))] // used by the config writer (M4)
     pub fn render(&self) -> String {
         let mut out = String::new();
         if self.bom {
@@ -212,8 +211,12 @@ pub fn load(path: &Path) -> AppResult<ParsedConfig> {
     Ok(out)
 }
 
-fn read_text(path: &Path) -> AppResult<String> {
-    let bytes = std::fs::read(path)?;
+pub fn read_text(path: &Path) -> AppResult<String> {
+    decode(path, std::fs::read(path)?)
+}
+
+/// Config files must be UTF-8 (with or without BOM), like OpenSSH expects.
+pub fn decode(path: &Path, bytes: Vec<u8>) -> AppResult<String> {
     if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         return Err(AppError::Validation(format!(
             "{} is UTF-16 encoded; OpenSSH and RidgeSSH need UTF-8",
@@ -328,7 +331,67 @@ fn collect_block(file: &ConfigFile, block: &Block, out: &mut ParsedConfig) {
     }
 }
 
-fn extract_host(
+/// What a directive line of a managed `Host` block maps to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Slot {
+    HostName,
+    User,
+    Port,
+    IdentityFile,
+    ProxyJump,
+    /// Index into `extra_options`.
+    Extra(usize),
+}
+
+/// Maps every directive line of a host block (by line index) to the field it fills.
+/// OpenSSH uses the first value of single-valued options; later ones are kept verbatim as
+/// extra options, and so is an unparsable `Port`. The writer relies on this exact mapping.
+pub fn block_slots(file: &ConfigFile, block: &Block) -> Vec<(usize, Slot)> {
+    let first = if block.kind == BlockKind::Preamble {
+        block.start
+    } else {
+        block.start + 1
+    };
+    let mut taken = HashSet::new();
+    let mut extras = 0;
+    let mut out = Vec::new();
+    for i in first..block.end {
+        let LineKind::Directive { key, value } = &file.lines[i].kind else {
+            continue;
+        };
+        let slot = match key.to_ascii_lowercase().as_str() {
+            "hostname" => Some(Slot::HostName),
+            "user" => Some(Slot::User),
+            "identityfile" => Some(Slot::IdentityFile),
+            "proxyjump" => Some(Slot::ProxyJump),
+            "port" if matches!(unquote(value).parse::<u16>(), Ok(p) if p > 0) => Some(Slot::Port),
+            _ => None,
+        }
+        .filter(|s| taken.insert(*s))
+        .unwrap_or_else(|| {
+            extras += 1;
+            Slot::Extra(extras - 1)
+        });
+        out.push((i, slot));
+    }
+    out
+}
+
+/// Hash of a block's directives (keyword case and layout do not matter).
+fn fingerprint(file: &ConfigFile, block: &Block) -> String {
+    let mut hasher = Sha256::new();
+    for line in file.directives(block) {
+        if let LineKind::Directive { key, value } = &line.kind {
+            hasher.update(key.to_ascii_lowercase().as_bytes());
+            hasher.update([0]);
+            hasher.update(value.as_bytes());
+            hasher.update(b"\n");
+        }
+    }
+    hex::encode(&hasher.finalize()[..12])
+}
+
+pub fn extract_host(
     file: &ConfigFile,
     block: &Block,
     alias: &str,
@@ -344,48 +407,54 @@ fn extract_host(
         extra_options: Vec::new(),
         source: file.path.clone(),
         line: block.start + 1,
-        fingerprint: String::new(),
+        fingerprint: fingerprint(file, block),
     };
-    let mut hasher = Sha256::new();
-    for line in file.directives(block) {
-        let LineKind::Directive { key, value } = &line.kind else {
+    for (i, slot) in block_slots(file, block) {
+        let LineKind::Directive { key, value } = &file.lines[i].kind else {
             continue;
         };
-        hasher.update(key.to_ascii_lowercase().as_bytes());
-        hasher.update([0]);
-        hasher.update(value.as_bytes());
-        hasher.update(b"\n");
-
-        // OpenSSH uses the first value for single-valued options; later ones are kept verbatim.
-        let slot = match key.to_ascii_lowercase().as_str() {
-            "hostname" => Some(&mut h.hostname),
-            "user" => Some(&mut h.user),
-            "identityfile" => Some(&mut h.identity_file),
-            "proxyjump" => Some(&mut h.proxy_jump),
-            "port" if h.port.is_none() => match unquote(value).parse::<u16>() {
-                Ok(p) if p > 0 => {
-                    h.port = Some(p);
-                    continue;
-                }
-                _ => {
+        let v = || Some(unquote(value));
+        match slot {
+            Slot::HostName => h.hostname = v(),
+            Slot::User => h.user = v(),
+            Slot::IdentityFile => h.identity_file = v(),
+            Slot::ProxyJump => h.proxy_jump = v(),
+            Slot::Port => h.port = unquote(value).parse().ok(),
+            Slot::Extra(_) => {
+                if key.eq_ignore_ascii_case("port") && h.port.is_none() {
                     warnings.push(format!(
                         "Host {alias}: invalid Port {value:?} kept as an option"
                     ));
-                    None
                 }
-            },
-            _ => None,
-        };
-        match slot {
-            Some(s) if s.is_none() => *s = Some(unquote(value)),
-            _ => h.extra_options.push(Directive {
-                key: key.clone(),
-                value: value.clone(),
-            }),
+                h.extra_options.push(Directive {
+                    key: key.clone(),
+                    value: value.clone(),
+                });
+            }
         }
     }
-    h.fingerprint = hex::encode(&hasher.finalize()[..12]);
     h
+}
+
+impl ConfigHost {
+    pub fn connection(&self) -> Connection {
+        Connection {
+            alias: self.alias.clone(),
+            hostname: self.hostname.clone(),
+            user: self.user.clone(),
+            port: self.port,
+            identity_file: self.identity_file.clone(),
+            proxy_jump: self.proxy_jump.clone(),
+            extra_options: self.extra_options.clone(),
+        }
+    }
+}
+
+/// The managed block for `alias` in one file: the first `Host` block whose only pattern is it.
+pub fn find_host_block<'a>(file: &'a ConfigFile, alias: &str) -> Option<&'a Block> {
+    file.blocks.iter().find(
+        |b| matches!(&b.kind, BlockKind::Host { patterns } if patterns.len() == 1 && patterns[0] == alias),
+    )
 }
 
 #[cfg(test)]
