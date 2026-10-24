@@ -142,6 +142,10 @@ export function installFakeBackend(seed: FakeSeed = {}) {
       }
       case "tags_list":
         return [];
+      case "terminal_open_external":
+        return null;
+      case "host_activity":
+        return [];
       case "sync_run":
         lastSync = {
           scannedAt: now(),

@@ -12,3 +12,14 @@ export function formatTs(ts: string | null): string {
   const d = new Date(ts);
   return Number.isNaN(d.getTime()) ? ts : d.toLocaleString();
 }
+
+/** Human duration between two timestamps, e.g. "1h 4m", "35s". */
+export function duration(start: string, end: string | null): string {
+  if (!end) return "running";
+  const s = Math.max(0, Math.round((Date.parse(end) - Date.parse(start)) / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${s % 60}s`;
+  return `${s}s`;
+}

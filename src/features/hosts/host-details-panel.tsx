@@ -1,10 +1,14 @@
 import {
+  ExternalLinkIcon,
   MousePointerClickIcon,
   PencilIcon,
   RotateCcwIcon,
+  SquareTerminalIcon,
   StarIcon,
   Trash2Icon,
 } from "lucide-react";
+import { HostSessions } from "@/features/terminal/host-sessions";
+import { useConnect } from "@/features/terminal/use-connect";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -48,6 +52,7 @@ function Details({ host }: { host: Host }) {
   const fav = useSetFavorite();
   const actions = useHostActions();
   const purge = usePurgeConfirm();
+  const { connect, connectExternal } = useConnect();
   const trashed = host.deletedAt !== null;
 
   return (
@@ -71,6 +76,18 @@ function Details({ host }: { host: Host }) {
             </>
           ) : (
             <>
+              <Button size="sm" className="mr-1" onClick={() => connect(host)}>
+                <SquareTerminalIcon /> Connect
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Open in external terminal"
+                title="Open in external terminal"
+                onClick={() => connectExternal(host)}
+              >
+                <ExternalLinkIcon />
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -103,8 +120,14 @@ function Details({ host }: { host: Host }) {
       <Tabs defaultValue="details" className="min-h-0 flex-1 gap-0">
         <TabsList variant="line" className="w-full justify-start border-b px-3">
           <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
+        <TabsContent value="sessions" className="min-h-0">
+          <ScrollArea className="h-full">
+            <HostSessions hostId={host.id} />
+          </ScrollArea>
+        </TabsContent>
         <TabsContent value="details" className="min-h-0">
           <ScrollArea className="h-full">
             <div className="grid gap-5 p-4">

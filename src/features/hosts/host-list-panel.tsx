@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import {
+  ExternalLinkIcon,
   FolderInputIcon,
   PencilIcon,
   PlusIcon,
   RotateCcwIcon,
   SearchXIcon,
   ServerIcon,
+  SquareTerminalIcon,
   StarIcon,
   Trash2Icon,
   XIcon,
@@ -39,6 +41,7 @@ import { connectionLabel } from "./format";
 import { useHostActions, usePurgeConfirm } from "./host-actions";
 import { SyncBadges } from "./host-badges";
 import { useGroupsData, useHosts, useMoveHosts, useSetFavorite } from "./queries";
+import { useConnect } from "@/features/terminal/use-connect";
 
 const VIEW_TITLES: Record<Exclude<HostView, "group">, string> = {
   all: "All hosts",
@@ -135,6 +138,7 @@ function HostRow({ host, groups }: { host: Host; groups: Group[] }) {
   const move = useMoveHosts();
   const actions = useHostActions();
   const purge = usePurgeConfirm();
+  const { connect, connectExternal } = useConnect();
   const trashed = host.deletedAt !== null;
   const path = groupPath(groups, host.groupId);
 
@@ -146,9 +150,12 @@ function HostRow({ host, groups }: { host: Host; groups: Group[] }) {
             role="button"
             tabIndex={0}
             onClick={() => selectHost(host.id)}
-            onDoubleClick={() => !trashed && openHostForm(host.id)}
+            onDoubleClick={() => !trashed && connect(host)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") selectHost(host.id);
+              if (e.key === "Enter") {
+                selectHost(host.id);
+                if (!trashed) connect(host);
+              }
               if (e.key === "Delete" && !trashed) actions.trash([host]);
             }}
             className={cn(
@@ -209,6 +216,13 @@ function HostRow({ host, groups }: { host: Host; groups: Group[] }) {
             </>
           ) : (
             <>
+              <ContextMenuItem onSelect={() => connect(host)}>
+                <SquareTerminalIcon /> Connect
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => connectExternal(host)}>
+                <ExternalLinkIcon /> Open in external terminal
+              </ContextMenuItem>
+              <ContextMenuSeparator />
               <ContextMenuItem onSelect={() => openHostForm(host.id)}>
                 <PencilIcon /> Edit
               </ContextMenuItem>

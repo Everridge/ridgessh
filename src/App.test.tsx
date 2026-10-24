@@ -108,7 +108,8 @@ describe("hosts", () => {
     installFakeBackend({ hosts: [{ alias: "api", port: 22 }] });
     const user = renderApp();
 
-    await user.dblClick(within(await findHostList()).getByText("api", { selector: "span" }));
+    await user.click(within(await findHostList()).getByText("api", { selector: "span" }));
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
     const dialog = await screen.findByRole("dialog");
     const port = within(dialog).getByLabelText(/^port$/i);
     await user.clear(port);

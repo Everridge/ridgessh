@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 /** Error shape returned by every Rust command (see `src-tauri/src/error.rs`). */
 export interface AppError {
@@ -162,6 +162,25 @@ export interface AuditEntry {
   after: Record<string, unknown> | null;
 }
 
+export interface Activity {
+  id: number;
+  hostId: string | null;
+  kind: "terminal" | "terminal_external" | "scp_up" | "scp_down" | "script";
+  startedAt: string;
+  endedAt: string | null;
+  exitCode: number | null;
+  details: { command?: string } | null;
+}
+
+export interface TerminalOpened {
+  sessionId: string;
+  command: string;
+}
+
+export interface TerminalExit {
+  exitCode: number | null;
+}
+
 /** Typed wrappers around Tauri commands. Keep in sync with `src-tauri/src/commands`. */
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
@@ -196,4 +215,20 @@ export const api = {
     invoke<Host>("sync_resolve_conflict", { id, keep }),
   syncAcceptRename: (fromId: string, toId: string) =>
     invoke<Host>("sync_accept_rename", { fromId, toId }),
+
+  terminalOpen: (
+    hostId: string,
+    cols: number,
+    rows: number,
+    onData: Channel<ArrayBuffer>,
+    onExit: Channel<TerminalExit>,
+  ) => invoke<TerminalOpened>("terminal_open", { hostId, cols, rows, onData, onExit }),
+  terminalWrite: (sessionId: string, data: string) =>
+    invoke<void>("terminal_write", { sessionId, data }),
+  terminalResize: (sessionId: string, cols: number, rows: number) =>
+    invoke<void>("terminal_resize", { sessionId, cols, rows }),
+  terminalClose: (sessionId: string) => invoke<void>("terminal_close", { sessionId }),
+  terminalOpenExternal: (hostId: string) => invoke<void>("terminal_open_external", { hostId }),
+  hostActivity: (hostId: string, limit?: number) =>
+    invoke<Activity[]>("host_activity", { hostId, limit }),
 };

@@ -1,5 +1,6 @@
 //! SQLite connection, migrations and repositories.
 
+pub mod activity;
 pub mod groups;
 pub mod hosts;
 pub mod tags;

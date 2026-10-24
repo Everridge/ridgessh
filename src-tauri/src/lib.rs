@@ -13,18 +13,20 @@ mod sync;
 mod terminal;
 mod transfer;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
 use crate::db::Db;
 use crate::paths::AppPaths;
+use crate::terminal::TerminalManager;
 
 /// Shared state managed by Tauri and injected into commands.
 pub struct AppState {
     pub paths: AppPaths,
     pub db: Db,
     pub last_sync: Mutex<Option<sync::SyncReport>>,
+    pub terminals: Arc<TerminalManager>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -53,15 +55,21 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let paths = AppPaths::resolve(app.handle())?;
             tracing::info!(data_dir = %paths.data_dir.display(), "starting RidgeSSH");
             let db = Db::open(&paths.db_file)?;
+            let dangling = db.tx(db::activity::close_dangling)?;
+            if dangling > 0 {
+                tracing::info!(dangling, "closed sessions left open by a previous run");
+            }
             app.manage(AppState {
                 paths,
                 db,
                 last_sync: Mutex::new(None),
+                terminals: Arc::new(TerminalManager::default()),
             });
             Ok(())
         })
@@ -90,7 +98,21 @@ pub fn run() {
             commands::sync::sync_keep_db_only,
             commands::sync::sync_resolve_conflict,
             commands::sync::sync_accept_rename,
+            commands::terminal::terminal_open,
+            commands::terminal::terminal_write,
+            commands::terminal::terminal_resize,
+            commands::terminal::terminal_close,
+            commands::terminal::terminal_open_external,
+            commands::terminal::host_activity,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Don't leave ssh processes behind when the window closes.
+            if let tauri::RunEvent::Exit = event
+                && let Some(state) = app.try_state::<AppState>()
+            {
+                state.terminals.kill_all();
+            }
+        });
 }
