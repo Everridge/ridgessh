@@ -3,9 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "@/components/app-providers";
 import { useTerminalStore } from "@/features/terminal/store";
+import type { FolderSpec } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
 import { installFakeBackend } from "@/test/fake-backend";
 import App from "@/App";
+import { folderName, planSteps, tabTitle, validOwner } from "./folder-plan";
 
 vi.mock("@/features/terminal/terminal-view", () => ({ TerminalView: () => null }));
 
@@ -24,8 +26,41 @@ function renderApp() {
   return user;
 }
 
-describe("download folder", () => {
-  it("starts a zip transfer tab with the chosen options", async () => {
+describe("folder plan helpers", () => {
+  const alias = (id: string) => ({ a: "web", b: "db" })[id] ?? id;
+  const base = { unpack: false, keepZip: true, existing: "backup" } as const;
+
+  it("names folders and tabs", () => {
+    expect(folderName("/srv/app/")).toBe("app");
+    expect(folderName("C:\\work\\site")).toBe("site");
+    expect(folderName("~")).toBe("");
+    const copy: FolderSpec = {
+      ...base,
+      source: { kind: "remote", hostId: "a", user: "deploy", path: "/srv/app" },
+      destination: { kind: "remote", hostId: "b", path: "/srv" },
+    };
+    expect(tabTitle(copy, alias)).toBe("⇄ app: deploy@web → db");
+  });
+
+  it("lists the steps for each direction", () => {
+    const up: FolderSpec = {
+      ...base,
+      owner: "www-data",
+      source: { kind: "local", path: "C:\\site" },
+      destination: { kind: "remote", hostId: "a", path: "/var/www" },
+    };
+    const steps = planSteps(up, alias);
+    expect(steps).toHaveLength(7);
+    expect(steps[2]).toBe("Zip on this PC into a temporary file");
+    expect(steps[5]).toBe("Set the owner to www-data");
+    expect(validOwner("www-data:www-data")).toBe(true);
+    expect(validOwner("a b")).toBe(false);
+    expect(validOwner("-R")).toBe(false);
+  });
+});
+
+describe("folder dialog", () => {
+  it("downloads a folder with the chosen options", async () => {
     const backend = installFakeBackend({
       hosts: [{ alias: "web" }],
       lastRemote: "/srv/app/",
@@ -33,35 +68,100 @@ describe("download folder", () => {
     });
     const user = renderApp();
     await screen.findByRole("list", { name: "Hosts" });
-    useUiStore.getState().openFolderTransfer(backend.hosts[0].id);
+    useUiStore.getState().openFolderTransfer("download", backend.hosts[0].id);
 
-    const dialog = await screen.findByRole("dialog", { name: "Download folder — web" });
-    const download = within(dialog).getByRole("button", { name: "Download" });
+    const dialog = await screen.findByRole("dialog", { name: "Download folder" });
+    const start = within(dialog).getByRole("button", { name: "Download" });
     // The last remote folder is suggested; a local folder still has to be chosen.
     await waitFor(() =>
       expect(within(dialog).getByLabelText("Remote folder")).toHaveValue("/srv/app/"),
     );
-    expect(download).toBeDisabled();
-    await user.click(within(dialog).getByRole("button", { name: /choose/i }));
-    expect(within(dialog).getByLabelText("Save to")).toHaveValue("C:\\Downloads");
-
+    expect(start).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Choose: Save to" }));
     await user.click(within(dialog).getByRole("checkbox", { name: "Unpack after downloading" }));
     await user.click(within(dialog).getByRole("checkbox", { name: "Keep the .zip as well" }));
-    const plan = within(dialog).getByRole("list", { name: "What will happen" });
-    expect(plan).toHaveTextContent("delete the .zip");
-    await user.click(download);
+    expect(within(dialog).getByRole("list", { name: "What will happen" })).toHaveTextContent(
+      "delete the .zip",
+    );
+    await user.click(start);
 
     const tab = useTerminalStore.getState().tabs[0];
     expect(tab.title).toBe("⇣ app ← web");
     expect(tab.job).toEqual({
       kind: "folder",
       spec: {
-        hostId: backend.hosts[0].id,
-        user: null,
-        remotePath: "/srv/app/",
-        localDir: "C:\\Downloads",
+        source: { kind: "remote", hostId: backend.hosts[0].id, user: null, path: "/srv/app/" },
+        destination: { kind: "local", path: "C:\\Downloads" },
         unpack: true,
         keepZip: false,
+        keepCopy: null,
+        existing: "backup",
+        owner: null,
+      },
+    });
+  });
+
+  it("uploads a local folder into a server folder, with an owner", async () => {
+    const backend = installFakeBackend({
+      hosts: [{ alias: "web" }],
+      dialogResult: "C:\\work\\site",
+    });
+    const user = renderApp();
+    await screen.findByRole("list", { name: "Hosts" });
+    useUiStore.getState().openFolderTransfer("upload", backend.hosts[0].id);
+
+    const dialog = await screen.findByRole("dialog", { name: "Upload folder" });
+    await user.click(within(dialog).getByRole("button", { name: "Choose: Folder on this PC" }));
+    await user.type(within(dialog).getByLabelText("Destination folder on the server"), "/var/www");
+    expect(within(dialog).getByText("The folder ends up as /var/www/site")).toBeInTheDocument();
+
+    const owner = within(dialog).getByLabelText("Set owner (optional)");
+    await user.type(owner, "bad owner");
+    expect(within(dialog).getByRole("button", { name: "Upload" })).toBeDisabled();
+    await user.clear(owner);
+    await user.type(owner, "www-data:www-data");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+
+    const tab = useTerminalStore.getState().tabs[0];
+    expect(tab.title).toBe("⇡ site → web");
+    expect(tab.job).toMatchObject({
+      kind: "folder",
+      spec: {
+        source: { kind: "local", path: "C:\\work\\site" },
+        destination: { kind: "remote", hostId: backend.hosts[0].id, path: "/var/www" },
+        owner: "www-data:www-data",
+        existing: "backup",
+      },
+    });
+  });
+
+  it("copies between two servers", async () => {
+    const backend = installFakeBackend({
+      hosts: [{ alias: "web" }, { alias: "db" }],
+      lastRemote: "/srv/app",
+    });
+    const user = renderApp();
+    await screen.findByRole("list", { name: "Hosts" });
+    useUiStore.getState().openFolderTransfer("copy", backend.hosts[0].id);
+
+    const dialog = await screen.findByRole("dialog", { name: "Copy folder between servers" });
+    const start = within(dialog).getByRole("button", { name: "Copy" });
+    expect(start).toBeDisabled();
+    await user.click(within(dialog).getByRole("combobox", { name: "Destination server" }));
+    await user.click(await screen.findByRole("option", { name: /^db/ }));
+    await user.type(within(dialog).getByLabelText("Destination folder on the server"), "/srv");
+    await user.click(within(dialog).getByRole("combobox", { name: /if a folder of that name/i }));
+    await user.click(await screen.findByRole("option", { name: /stop without/i }));
+    await waitFor(() => expect(start).toBeEnabled());
+    await user.click(start);
+
+    const tab = useTerminalStore.getState().tabs[0];
+    expect(tab.title).toBe("⇄ app: web → db");
+    expect(tab.job).toMatchObject({
+      spec: {
+        source: { kind: "remote", hostId: backend.hosts[0].id, path: "/srv/app" },
+        destination: { kind: "remote", hostId: backend.hosts[1].id, path: "/srv" },
+        existing: "stop",
       },
     });
   });
@@ -75,11 +175,17 @@ describe("download folder", () => {
       { id: "h1", alias: "web" },
       {
         kind: "folder",
-        spec: { hostId: "h1", remotePath: "/a", localDir: "C:\\x", unpack: false, keepZip: true },
+        spec: {
+          source: { kind: "remote", hostId: "h1", path: "/a" },
+          destination: { kind: "local", path: "C:\\x" },
+          unpack: false,
+          keepZip: true,
+          existing: "backup",
+        },
       },
       "⇣ a ← web",
     );
-    s.setRun(id, "run1", ["Check", "Zip on server", "Download", "Clean up"]);
+    s.setRun(id, "run1", ["Check source", "Zip on server", "Download", "Clean up"]);
     s.setStep(id, 0, "done", null);
     s.setStep(id, 1, "warning", "Some files could not be read");
     s.setStep(id, 2, "failed", "scp failed");

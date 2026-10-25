@@ -1,12 +1,15 @@
-//! Folder transfers (M11): a remote folder is zipped on the server, downloaded with a
-//! checksum check, optionally unpacked locally, and the server's temporary files are removed.
+//! Folder transfers (M11): a folder is zipped where it is (on a server, or on this PC),
+//! carried over with a checksum check, and unpacked where it goes; temporary archives are
+//! removed at the end. Server → PC, PC → server and server → PC → server.
 //!
 //! Each step is one ssh/scp process in the tab's PTY (see [`runner`]), so password and
 //! host-key prompts work. Remote steps are fixed `sh -c` scripts; everything that varies (the
 //! folder path, archive names) is passed as quoted positional arguments, never spliced into
 //! the script. Steps report success through their exit codes, and the archive's checksum
-//! travels in a small `.sum` file next to it, so nothing depends on parsing terminal output.
+//! travels in a small `.sum` file (downloads) or as an argument to the unpack script
+//! (uploads), so nothing depends on parsing terminal output.
 
+pub mod local;
 pub mod runner;
 
 use std::path::{Path, PathBuf};
@@ -16,24 +19,84 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 use crate::terminal::ssh_args::posix_quote;
 
-/// What to transfer and what to do with it. Phase 1: a remote folder to this PC.
+/// One side of a transfer.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Endpoint {
+    /// A server. As a source, `path` is the folder; as a destination, the folder that
+    /// receives it (`path/<name>`). Absolute, `~/…`, or relative to the login directory.
+    #[serde(rename_all = "camelCase")]
+    Remote {
+        host_id: String,
+        /// Connect as this user (`user@alias`, see `target_args`).
+        #[serde(default)]
+        user: Option<String>,
+        path: String,
+    },
+    /// This PC: the folder itself (source), or the folder that receives `<name>.zip` and
+    /// `<name>/` (destination). Absolute.
+    #[serde(rename_all = "camelCase")]
+    Local { path: String },
+}
+
+impl Endpoint {
+    pub fn host_id(&self) -> Option<&str> {
+        match self {
+            Endpoint::Remote { host_id, .. } => Some(host_id),
+            Endpoint::Local { .. } => None,
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        match self {
+            Endpoint::Remote { path, .. } | Endpoint::Local { path } => path.trim(),
+        }
+    }
+}
+
+/// What to do when the destination already has a folder of that name.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Existing {
+    /// Move it aside to `name.bak-<date>` first.
+    #[default]
+    Backup,
+    /// Unpack over it: same-named files are replaced, others are kept.
+    Merge,
+    /// Stop without changing anything.
+    Stop,
+}
+
+impl Existing {
+    fn as_arg(self) -> &'static str {
+        match self {
+            Existing::Backup => "backup",
+            Existing::Merge => "merge",
+            Existing::Stop => "stop",
+        }
+    }
+}
+
+/// What to transfer and what to do with it.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderSpec {
-    pub host_id: String,
-    /// Connect as this user (`user@alias`, see `target_args`).
-    #[serde(default)]
-    pub user: Option<String>,
-    /// The remote folder: absolute, `~/…`, or relative to the login directory.
-    pub remote_path: String,
-    /// Local folder that receives `<name>.zip` (and `<name>/` when unpacking).
-    pub local_dir: String,
-    /// Unpack the archive here after downloading.
+    pub source: Endpoint,
+    pub destination: Endpoint,
+    /// This PC as destination: unpack the archive after downloading.
     #[serde(default)]
     pub unpack: bool,
-    /// Keep the `.zip` after unpacking (always kept when not unpacking).
+    /// This PC as destination: keep the `.zip` after unpacking.
     #[serde(default = "yes")]
     pub keep_zip: bool,
+    /// Server → server: also keep the archive in this local folder.
+    #[serde(default)]
+    pub keep_copy: Option<String>,
+    #[serde(default)]
+    pub existing: Existing,
+    /// Server as destination: `chown -R` the unpacked folder (`user` or `user:group`).
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 fn yes() -> bool {
@@ -43,20 +106,32 @@ fn yes() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum StepKind {
+    /// The source folder (on the server, or on this PC).
     Check,
+    /// The destination server.
+    CheckDest,
     Pack,
+    PackLocal,
     Download,
     Unpack,
+    Upload,
+    UnpackRemote,
+    SetOwner,
     Cleanup,
 }
 
 impl StepKind {
     pub fn label(self) -> &'static str {
         match self {
-            StepKind::Check => "Check",
+            StepKind::Check => "Check source",
+            StepKind::CheckDest => "Check destination",
             StepKind::Pack => "Zip on server",
+            StepKind::PackLocal => "Zip on this PC",
             StepKind::Download => "Download",
             StepKind::Unpack => "Unpack locally",
+            StepKind::Upload => "Upload",
+            StepKind::UnpackRemote => "Unpack on server",
+            StepKind::SetOwner => "Set owner",
             StepKind::Cleanup => "Clean up",
         }
     }
@@ -71,12 +146,113 @@ pub struct StepInfo {
 
 /// The steps `spec` runs, in order.
 pub fn steps(spec: &FolderSpec) -> Vec<StepKind> {
-    let mut out = vec![StepKind::Check, StepKind::Pack, StepKind::Download];
-    if spec.unpack {
+    use Endpoint::{Local, Remote};
+    let remote_dest = matches!(spec.destination, Remote { .. });
+    let mut out = vec![StepKind::Check];
+    if remote_dest {
+        out.push(StepKind::CheckDest);
+    }
+    match spec.source {
+        Remote { .. } => out.extend([StepKind::Pack, StepKind::Download]),
+        Local { .. } => out.push(StepKind::PackLocal),
+    }
+    if remote_dest {
+        out.extend([StepKind::Upload, StepKind::UnpackRemote]);
+        if spec.owner.is_some() {
+            out.push(StepKind::SetOwner);
+        }
+    } else if spec.unpack {
         out.push(StepKind::Unpack);
     }
     out.push(StepKind::Cleanup);
     out
+}
+
+/// Checks everything that can be checked before connecting anywhere.
+pub fn check_spec(spec: &FolderSpec) -> AppResult<()> {
+    let local_dir = |p: &str, what: &str| -> AppResult<()> {
+        let path = Path::new(p);
+        if !path.is_absolute() || !path.is_dir() {
+            return Err(AppError::Validation(format!(
+                "choose an existing {what} on this PC (not {p:?})"
+            )));
+        }
+        Ok(())
+    };
+    match &spec.source {
+        Endpoint::Remote { path, .. } => {
+            check_remote_path(path)?;
+        }
+        Endpoint::Local { path } => {
+            local_dir(path.trim(), "folder to upload")?;
+            if Path::new(path.trim()).file_name().is_none() {
+                return Err(AppError::Validation(format!(
+                    "{path} is not a folder that can be zipped"
+                )));
+            }
+        }
+    }
+    match &spec.destination {
+        Endpoint::Remote { path, .. } => {
+            check_remote_dir(path)?;
+        }
+        Endpoint::Local { path } => {
+            if matches!(spec.source, Endpoint::Local { .. }) {
+                return Err(AppError::Validation(
+                    "copying between two folders on this PC is not supported".into(),
+                ));
+            }
+            local_dir(path.trim(), "folder to save into")?;
+        }
+    }
+    if let Some(dir) = &spec.keep_copy {
+        local_dir(dir.trim(), "folder for the local copy")?;
+    }
+    if let Some(owner) = &spec.owner {
+        check_owner(owner)?;
+    }
+    Ok(())
+}
+
+/// `user`, `user:group`, numeric ids too; nothing a shell or `chown` could misread.
+pub fn check_owner(owner: &str) -> AppResult<()> {
+    let part = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 32
+            && !s.starts_with('-')
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    };
+    let ok = match owner.split_once(':') {
+        Some((u, g)) => part(u) && part(g),
+        None => part(owner),
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(AppError::Validation(format!(
+            "{owner:?} is not an owner; use user or user:group"
+        )))
+    }
+}
+
+/// A destination folder on a server (the folder that receives the copy).
+pub fn check_remote_dir(path: &str) -> AppResult<&str> {
+    let p = path.trim();
+    if p.is_empty() || p.len() > 4096 || p.chars().any(char::is_control) {
+        return Err(AppError::Validation(
+            "enter the destination folder on the server".into(),
+        ));
+    }
+    Ok(p)
+}
+
+/// The folder's name as it will appear at the destination, when known before anything ran
+/// (`None` for a remote `~`, whose name depends on the server).
+pub fn source_name(spec: &FolderSpec) -> Option<String> {
+    let p = spec.source.path().trim_end_matches(['/', '\\']);
+    let last = p.rsplit(['/', '\\']).next()?;
+    (!last.is_empty() && last != "~").then(|| last.to_string())
 }
 
 /// The remote path as typed, checked for things no folder path contains.
@@ -101,9 +277,16 @@ pub fn remote_archive(run_id: &str) -> String {
     format!("/tmp/ridgessh-{run_id}.zip")
 }
 
+/// The run's archive as uploaded to the destination server. A different name from
+/// [`remote_archive`], so copying between two folders of one server works too.
+pub fn remote_inbox(run_id: &str) -> String {
+    format!("/tmp/ridgessh-{run_id}-in.zip")
+}
+
 fn is_own_archive(path: &str) -> bool {
     path.strip_prefix("/tmp/ridgessh-")
         .and_then(|r| r.strip_suffix(".zip"))
+        .map(|id| id.strip_suffix("-in").unwrap_or(id))
         .is_some_and(|id| id.len() == 12 && id.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
@@ -164,7 +347,135 @@ exit $rc
 const CLEANUP: &str = r#"rm -f -- "$1" "$1.sum" && echo 'Removed the temporary archive from the server.'
 "#;
 
+pub const EXIT_CHECKSUM: u32 = 20;
+pub const EXIT_EXISTS: u32 = 21;
+pub const EXIT_UNSAFE: u32 = 22;
+
+/// The destination server: an unpacker, a writable place for the folder, free space, and
+/// (when the name is known) what happens to an existing folder of that name.
+/// Args: parent, name or "-", existing policy, needed KB or "-".
+const CHECK_DEST: &str = r#"name=$2; policy=$3; need=$4
+if command -v unzip >/dev/null 2>&1; then tool=unzip
+elif command -v python3 >/dev/null 2>&1; then tool='python3 (unzip is not installed)'
+else echo 'Neither unzip nor python3 is installed on the server. Install unzip, for example: sudo apt install unzip' >&2; exit 11; fi
+d=$p; while [ ! -d "$d" ]; do d=$(dirname -- "$d"); done
+if [ ! -w "$d" ]; then echo "No permission to write in $d" >&2; exit 13; fi
+[ -d "$p" ] || echo "Will create:   $p"
+free=$(df -Pk "$d" | awk 'NR==2 {print $4}')
+tmpfree=$(df -Pk /tmp | awk 'NR==2 {print $4}')
+echo "Destination:   $p"
+echo "Unzip with:    $tool"
+echo "Free there:    $(( ${free:-0} / 1024 )) MB, in /tmp: $(( ${tmpfree:-0} / 1024 )) MB"
+if [ "$name" != - ] && [ -e "$p/$name" ]; then
+  case $policy in
+    stop) echo "$p/$name already exists." >&2; exit 21 ;;
+    backup) echo "$p/$name exists; it will be moved to $name.bak-<date> first." ;;
+    *) echo "$p/$name exists; the copy will be unpacked over it." ;;
+  esac
+fi
+if [ "$need" != - ] && [ -n "$tmpfree" ] && [ "$tmpfree" -lt "$need" ]; then
+  echo "Not enough free space in /tmp for the archive." >&2; exit 12
+fi
+"#;
+
+/// Verifies the uploaded archive, deals with an existing folder, unpacks.
+/// Args: parent, archive, name, existing policy, expected SHA-256 or "-", unpacker script.
+const UNPACK_REMOTE: &str = r#"a=$2; name=$3; policy=$4; want=$5
+if [ "$want" != - ]; then
+  if command -v sha256sum >/dev/null 2>&1; then sum=$(sha256sum -- "$a" | cut -d' ' -f1)
+  elif command -v shasum >/dev/null 2>&1; then sum=$(shasum -a 256 "$a" | cut -d' ' -f1)
+  else sum=; echo 'No SHA-256 tool on the server; only the upload itself was checked.'; fi
+  if [ -n "$sum" ] && [ "$sum" != "$want" ]; then echo 'The uploaded archive does not match: it was damaged in transit.' >&2; exit 20; fi
+  [ -n "$sum" ] && echo 'Checksum OK'
+fi
+mkdir -p -- "$p" && cd -- "$p" || exit 13
+if [ -e "$name" ] || [ -L "$name" ]; then
+  case $policy in
+    stop) echo "$p/$name already exists." >&2; exit 21 ;;
+    backup) b="$name.bak-$(date +%Y%m%d-%H%M%S)"; mv -- "$name" "$b" || exit 13; echo "Moved the existing $name to $b" ;;
+    *) echo "Unpacking over the existing $name" ;;
+  esac
+fi
+if command -v unzip >/dev/null 2>&1; then unzip -o -q "$a" -d .; rc=$?
+else python3 -c "$6" "$a" .; rc=$?; fi
+[ $rc -eq 0 ] || exit $rc
+echo "Unpacked into $p/$name"
+"#;
+
+/// Args: parent, name, owner.
+const OWNER: &str = r#"chown -R -- "$3" "$p/$2" && echo "Owner of $p/$2 is now $3"
+"#;
+
 const PYZIP: &str = include_str!("pyzip.py");
+const PYUNZIP: &str = include_str!("pyunzip.py");
+
+pub fn check_dest_command(
+    parent: &str,
+    name: Option<&str>,
+    existing: Existing,
+    need_kb: Option<u64>,
+) -> AppResult<String> {
+    let parent = check_remote_dir(parent)?;
+    let need = need_kb.map(|k| k.to_string());
+    Ok(remote(
+        &format!("{RESOLVE}{CHECK_DEST}"),
+        &[
+            parent,
+            name.unwrap_or("-"),
+            existing.as_arg(),
+            need.as_deref().unwrap_or("-"),
+        ],
+    ))
+}
+
+pub fn unpack_remote_command(
+    parent: &str,
+    archive: &str,
+    name: &str,
+    existing: Existing,
+    sha256: Option<&str>,
+) -> AppResult<String> {
+    let parent = check_remote_dir(parent)?;
+    check_entry_name(name)?;
+    if !is_own_archive(archive) {
+        return Err(AppError::Validation(format!(
+            "unexpected archive {archive}"
+        )));
+    }
+    Ok(remote(
+        &format!("{RESOLVE}{UNPACK_REMOTE}"),
+        &[
+            parent,
+            archive,
+            name,
+            existing.as_arg(),
+            sha256.unwrap_or("-"),
+            PYUNZIP,
+        ],
+    ))
+}
+
+pub fn owner_command(parent: &str, name: &str, owner: &str) -> AppResult<String> {
+    let parent = check_remote_dir(parent)?;
+    check_entry_name(name)?;
+    check_owner(owner)?;
+    Ok(remote(&format!("{RESOLVE}{OWNER}"), &[parent, name, owner]))
+}
+
+/// A single path component (the folder's name inside the archive).
+fn check_entry_name(name: &str) -> AppResult<()> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\'])
+        || name.chars().any(char::is_control)
+    {
+        return Err(AppError::Validation(format!(
+            "unexpected folder name {name:?}"
+        )));
+    }
+    Ok(())
+}
 
 fn remote(script: &str, args: &[&str]) -> String {
     let args: String = args
@@ -331,5 +642,7 @@ pub fn find_tar() -> AppResult<PathBuf> {
     })
 }
 
+#[cfg(test)]
+mod flow_tests;
 #[cfg(test)]
 mod tests;

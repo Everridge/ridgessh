@@ -10,6 +10,8 @@ import {
   ExternalLinkIcon,
   FileDownIcon,
   FolderDownIcon,
+  FolderSyncIcon,
+  FolderUpIcon,
   FolderInputIcon,
   PencilIcon,
   PlayIcon,
@@ -46,7 +48,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Group, Host, UserVariant } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { useUiStore, type HostView } from "@/stores/ui";
+import { useUiStore, type FolderMode, type HostView } from "@/stores/ui";
 import {
   buildGroupTree,
   filterHosts,
@@ -426,9 +428,7 @@ function HostRow({
               >
                 <DownloadIcon /> Download…
               </ContextMenuItem>
-              <ContextMenuItem onSelect={() => useUiStore.getState().openFolderTransfer(host.id)}>
-                <FolderDownIcon /> Download folder as zip…
-              </ContextMenuItem>
+              <FolderZipMenu hostId={host.id} />
               <ContextMenuItem
                 onSelect={() => {
                   const { checkedIds, openScriptRun } = useUiStore.getState();
@@ -553,9 +553,7 @@ function VariantRow({
           >
             <DownloadIcon /> Download…
           </ContextMenuItem>
-          <ContextMenuItem onSelect={() => useUiStore.getState().openFolderTransfer(host.id, user)}>
-            <FolderDownIcon /> Download folder as zip…
-          </ContextMenuItem>
+          <FolderZipMenu hostId={host.id} user={user} />
           <ContextMenuItem
             onSelect={() => useUiStore.getState().openScriptRun([host.id], undefined, user)}
           >
@@ -564,6 +562,29 @@ function VariantRow({
         </ContextMenuContent>
       </ContextMenu>
     </li>
+  );
+}
+
+/** Zip a whole folder: download it, upload one, or copy it to another server. */
+function FolderZipMenu({ hostId, user = null }: { hostId: string; user?: string | null }) {
+  const open = (mode: FolderMode) => useUiStore.getState().openFolderTransfer(mode, hostId, user);
+  return (
+    <ContextMenuSub>
+      <ContextMenuSubTrigger>
+        <FolderSyncIcon /> Folder as zip
+      </ContextMenuSubTrigger>
+      <ContextMenuSubContent>
+        <ContextMenuItem onSelect={() => open("download")}>
+          <FolderDownIcon /> Download to this PC…
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => open("upload")}>
+          <FolderUpIcon /> Upload from this PC…
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => open("copy")}>
+          <FolderSyncIcon /> Copy to another server…
+        </ContextMenuItem>
+      </ContextMenuSubContent>
+    </ContextMenuSub>
   );
 }
 

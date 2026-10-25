@@ -2,6 +2,9 @@ import { create } from "zustand";
 
 export type HostView = "all" | "favorites" | "recent" | "removed" | "trash" | "group";
 
+/** Folder transfers: server → this PC, this PC → server, server → server. */
+export type FolderMode = "download" | "upload" | "copy";
+
 interface UiState {
   view: HostView;
   /** Selected group when `view === "group"`. */
@@ -9,8 +12,8 @@ interface UiState {
   historyOpen: boolean;
   /** Upload / download dialog for one host. */
   transfer: { hostId: string; direction: "upload" | "download"; user?: string | null } | null;
-  /** Download-folder dialog (zip on the server, download, unpack). */
-  folderTransfer: { hostId: string; user?: string | null } | null;
+  /** Folder transfer dialog, opened for a host in one direction (changeable in the dialog). */
+  folderTransfer: { mode: FolderMode; hostId: string; user?: string | null } | null;
   scriptsOpen: boolean;
   /** Run-script dialog: target hosts and an optional pre-selected script. */
   scriptRun: { hostIds: string[]; scriptId?: string; user?: string | null } | null;
@@ -49,7 +52,7 @@ interface UiState {
   setHistoryOpen: (open: boolean) => void;
   openTransfer: (hostId: string, direction: "upload" | "download", user?: string | null) => void;
   closeTransfer: () => void;
-  openFolderTransfer: (hostId: string, user?: string | null) => void;
+  openFolderTransfer: (mode: FolderMode, hostId: string, user?: string | null) => void;
   closeFolderTransfer: () => void;
   setScriptsOpen: (open: boolean) => void;
   openScriptRun: (hostIds: string[], scriptId?: string, user?: string | null) => void;
@@ -115,7 +118,8 @@ export const useUiStore = create<UiState>((set) => ({
   setHistoryOpen: (historyOpen) => set({ historyOpen }),
   openTransfer: (hostId, direction, user = null) => set({ transfer: { hostId, direction, user } }),
   closeTransfer: () => set({ transfer: null }),
-  openFolderTransfer: (hostId, user = null) => set({ folderTransfer: { hostId, user } }),
+  openFolderTransfer: (mode, hostId, user = null) =>
+    set({ folderTransfer: { mode, hostId, user } }),
   closeFolderTransfer: () => set({ folderTransfer: null }),
   setScriptsOpen: (scriptsOpen) => set({ scriptsOpen }),
   openScriptRun: (hostIds, scriptId, user = null) =>

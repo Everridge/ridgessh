@@ -1,7 +1,5 @@
 //! Folder transfers (M11) in a terminal tab.
 
-use std::path::Path;
-
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -10,8 +8,8 @@ use super::terminal::live_host;
 use crate::AppState;
 use crate::db::activity;
 use crate::error::{AppError, AppResult};
-use crate::folder::runner::{self, Remote, RunState, Runner, StepEvent};
-use crate::folder::{FolderSpec, StepInfo, check_remote_path};
+use crate::folder::runner::{self, Conn, RunState, Runner, StepEvent};
+use crate::folder::{Endpoint, FolderSpec, StepInfo, check_spec};
 use crate::settings;
 use crate::terminal::TerminalExit;
 use crate::terminal::ssh_args::{find_tool, host_options};
@@ -27,30 +25,61 @@ pub struct FolderOpened {
     pub steps: Vec<StepInfo>,
 }
 
+/// Paths used last time, to suggest them again.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderLast {
+    /// The folder last copied from this host.
     pub remote: Option<String>,
+    /// The folder last copied into on this host.
+    pub dest: Option<String>,
+    /// The last folder on this PC (either side).
     pub local: Option<String>,
 }
 
-fn remote_pref(host_id: &str) -> String {
+fn source_pref(host_id: &str) -> String {
     format!("folder-remote:{host_id}")
+}
+fn dest_pref(host_id: &str) -> String {
+    format!("folder-dest:{host_id}")
 }
 const LOCAL_PREF: &str = "folder-local";
 
-/// The remote folder last used for this host and the last local folder.
 #[tauri::command]
 pub fn folder_last(state: State<'_, AppState>, host_id: String) -> AppResult<FolderLast> {
     state.db.tx(|tx| {
         Ok(FolderLast {
-            remote: settings::pref(tx, &remote_pref(&host_id))?,
+            remote: settings::pref(tx, &source_pref(&host_id))?,
+            dest: settings::pref(tx, &dest_pref(&host_id))?,
             local: settings::pref(tx, LOCAL_PREF)?,
         })
     })
 }
 
-/// Starts (or, with `resume`, continues) a folder download in a terminal tab.
+/// Connection details for a server endpoint (`None` for this PC).
+fn conn_for(state: &AppState, end: &Endpoint) -> AppResult<Option<(Conn, String)>> {
+    let Endpoint::Remote { host_id, user, .. } = end else {
+        return Ok(None);
+    };
+    let host = live_host(state, host_id)?;
+    let (options, destination) = host_options(&host, user.as_deref())?;
+    Ok(Some((
+        Conn {
+            options,
+            destination,
+        },
+        host.id,
+    )))
+}
+
+fn describe(end: &Endpoint, conn: Option<&Conn>) -> String {
+    match (end, conn) {
+        (Endpoint::Remote { path, .. }, Some(c)) => format!("{}:{}", c.destination, path.trim()),
+        _ => end.path().to_string(),
+    }
+}
+
+/// Starts (or, with `resume`, continues) a folder transfer in a terminal tab.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // the IPC argument list
 pub fn folder_open(
@@ -64,7 +93,7 @@ pub fn folder_open(
     on_exit: Channel<TerminalExit>,
     on_step: Channel<StepEvent>,
 ) -> AppResult<FolderOpened> {
-    // A retry continues the stored run (its archive and progress); otherwise a new one.
+    // A retry continues the stored run (its archives and progress); otherwise a new one.
     let previous = match &resume {
         Some(id) => state
             .folder_runs
@@ -76,50 +105,49 @@ pub fn folder_open(
     let run = match previous {
         Some(run) => run,
         None => {
-            check_remote_path(&spec.remote_path)?;
-            let local = Path::new(spec.local_dir.trim());
-            if !local.is_absolute() || !local.is_dir() {
-                return Err(AppError::Validation(format!(
-                    "choose an existing local folder (not {})",
-                    spec.local_dir
-                )));
-            }
+            check_spec(&spec)?;
             let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
             RunState::new(id, spec)
         }
     };
     let spec = run.spec.clone();
-    let host = live_host(&state, &spec.host_id)?;
-    let (options, destination) = host_options(&host, spec.user.as_deref())?;
-    let remote = Remote {
-        ssh: find_tool("ssh")?,
-        scp: find_tool("scp")?,
-        options,
-        destination,
-    };
-    state.db.tx(|tx| {
-        settings::set_pref(tx, &remote_pref(&host.id), spec.remote_path.trim())?;
-        settings::set_pref(tx, LOCAL_PREF, spec.local_dir.trim())
-    })?;
-
+    let source = conn_for(&state, &spec.source)?;
+    let dest = conn_for(&state, &spec.destination)?;
     let command = format!(
-        "zip {} on {} → {}",
-        spec.remote_path.trim(),
-        remote.destination,
-        spec.local_dir.trim()
+        "zip {} → {}",
+        describe(&spec.source, source.as_ref().map(|s| &s.0)),
+        describe(&spec.destination, dest.as_ref().map(|d| &d.0)),
     );
-    let activity_id = state.db.tx(|tx| {
-        activity::start(
-            tx,
-            &host.id,
-            "folder_down",
-            serde_json::json!({
-                "command": command,
-                "remote": spec.remote_path.trim(),
-                "local": spec.local_dir.trim(),
-                "retry": resume.is_some(),
-            }),
-        )
+
+    let kind = match (&source, &dest) {
+        (Some(_), None) => "folder_down",
+        (None, Some(_)) => "folder_up",
+        _ => "folder_copy",
+    };
+    let details = serde_json::json!({
+        "command": command,
+        "source": spec.source.path(),
+        "destination": spec.destination.path(),
+        "retry": resume.is_some(),
+    });
+    // One activity entry per server involved, so each host's log shows the transfer.
+    let activities = state.db.tx(|tx| {
+        if let Some((_, host_id)) = &source {
+            settings::set_pref(tx, &source_pref(host_id), spec.source.path())?;
+        }
+        if let Some((_, host_id)) = &dest {
+            settings::set_pref(tx, &dest_pref(host_id), spec.destination.path())?;
+        }
+        for end in [&spec.source, &spec.destination] {
+            if let Endpoint::Local { path } = end {
+                settings::set_pref(tx, LOCAL_PREF, path.trim())?;
+            }
+        }
+        [&source, &dest]
+            .into_iter()
+            .flatten()
+            .map(|(_, host_id)| activity::start(tx, host_id, kind, details.clone()))
+            .collect::<AppResult<Vec<i64>>>()
     })?;
 
     let route = uuid::Uuid::new_v4().to_string();
@@ -136,17 +164,22 @@ pub fn folder_open(
     let runner = Runner {
         manager: state.terminals.clone(),
         route: route.clone(),
-        remote,
+        ssh: find_tool("ssh")?,
+        scp: find_tool("scp")?,
+        source: source.map(|s| s.0),
+        dest: dest.map(|d| d.0),
         on_data,
         on_step,
     };
     let finished = move |run: RunState, code: Option<u32>| {
         let state = app.state::<AppState>();
-        if let Err(e) = state
-            .db
-            .tx(|tx| activity::finish(tx, activity_id, code.map(i64::from)))
-        {
-            tracing::warn!("could not record the transfer's end: {e}");
+        for id in activities {
+            if let Err(e) = state
+                .db
+                .tx(|tx| activity::finish(tx, id, code.map(i64::from)))
+            {
+                tracing::warn!("could not record the transfer's end: {e}");
+            }
         }
         // Kept for a retry until it completes.
         if !run.finished
@@ -156,7 +189,7 @@ pub fn folder_open(
         }
     };
     runner::spawn(runner, run, on_exit, finished)?;
-    tracing::info!(host = %host.alias, "folder transfer started");
+    tracing::info!(kind, "folder transfer started");
     Ok(FolderOpened {
         session_id: route,
         command,

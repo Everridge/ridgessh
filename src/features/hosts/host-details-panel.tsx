@@ -113,9 +113,9 @@ function Details({ host }: { host: Host }) {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Download folder as zip"
-                title="Download folder as zip"
-                onClick={() => useUiStore.getState().openFolderTransfer(host.id)}
+                aria-label="Folder as zip"
+                title="Download, upload or copy a folder as zip"
+                onClick={() => useUiStore.getState().openFolderTransfer("download", host.id)}
               >
                 <FolderDownIcon />
               </Button>

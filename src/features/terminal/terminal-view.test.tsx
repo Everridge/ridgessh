@@ -141,11 +141,11 @@ describe("terminal view", () => {
     );
     vi.spyOn(api, "terminalClose").mockResolvedValue(undefined);
     const spec: FolderSpec = {
-      hostId: "h1",
-      remotePath: "/srv/app",
-      localDir: "C:\\dl",
+      source: { kind: "remote", hostId: "h1", path: "/srv/app" },
+      destination: { kind: "local", path: "C:\\dl" },
       unpack: false,
       keepZip: true,
+      existing: "backup",
     };
     useTerminalStore.getState().openJob({ id: "h1", alias: "web" }, { kind: "folder", spec }, "x");
     function Live() {

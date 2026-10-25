@@ -368,18 +368,44 @@ export interface TerminalOpened {
   command: string;
 }
 
-/** A remote folder zipped on the server and downloaded to this PC. */
+/**
+ * One side of a folder transfer. A remote source's `path` is the folder; a remote
+ * destination's `path` is the folder that receives it (`path/<name>`). Local paths are
+ * absolute: the folder itself (source) or the folder to save into (destination).
+ */
+export type FolderEndpoint =
+  | { kind: "remote"; hostId: string; user?: string | null; path: string }
+  | { kind: "local"; path: string };
+
+/** An existing folder of the same name at the destination: move it aside, unpack over it, or stop. */
+export type ExistingPolicy = "backup" | "merge" | "stop";
+
+/** Zip a folder where it is, carry it over, unpack it where it goes. */
 export interface FolderSpec {
-  hostId: string;
-  /** Connect as this user (`user@alias`). */
-  user?: string | null;
-  remotePath: string;
-  localDir: string;
+  source: FolderEndpoint;
+  destination: FolderEndpoint;
+  /** This PC as destination: unpack after downloading. */
   unpack: boolean;
+  /** This PC as destination: keep the .zip after unpacking. */
   keepZip: boolean;
+  /** Server → server: also keep the archive in this local folder. */
+  keepCopy?: string | null;
+  existing: ExistingPolicy;
+  /** Server as destination: chown -R the result (`user` or `user:group`). */
+  owner?: string | null;
 }
 
-export type StepKind = "check" | "pack" | "download" | "unpack" | "cleanup";
+export type StepKind =
+  | "check"
+  | "checkDest"
+  | "pack"
+  | "packLocal"
+  | "download"
+  | "unpack"
+  | "upload"
+  | "unpackRemote"
+  | "setOwner"
+  | "cleanup";
 export type StepStatus = "pending" | "running" | "done" | "warning" | "failed" | "skipped";
 
 export interface FolderOpened extends TerminalOpened {
@@ -602,7 +628,9 @@ export const api = {
     onStep: Channel<StepEvent>,
   ) => invoke<FolderOpened>("folder_open", { spec, resume, cols, rows, onData, onExit, onStep }),
   folderLast: (hostId: string) =>
-    invoke<{ remote: string | null; local: string | null }>("folder_last", { hostId }),
+    invoke<{ remote: string | null; dest: string | null; local: string | null }>("folder_last", {
+      hostId,
+    }),
   exportCreate: (path: string, password: string, selection: ExportSelection) =>
     invoke<ExportSummary>("export_create", { path, password, selection }),
   /** Plain, unencrypted ssh_config text with the hosts' connection values. */

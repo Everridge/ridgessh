@@ -322,7 +322,7 @@ export function installFakeBackend(seed: FakeSeed = {}) {
       case "terminal_open_external":
         return null;
       case "folder_last":
-        return { remote: seed.lastRemote ?? null, local: null };
+        return { remote: seed.lastRemote ?? null, dest: null, local: null };
       case "config_variants":
         return seed.variants ?? [];
       case "host_activity":
