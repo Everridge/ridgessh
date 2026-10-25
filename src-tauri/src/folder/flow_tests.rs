@@ -27,6 +27,7 @@ fn spec(source: Endpoint, destination: Endpoint) -> FolderSpec {
         unpack: false,
         keep_zip: true,
         keep_copy: None,
+        direct: false,
         existing: Existing::Backup,
         owner: None,
         excludes: vec![],
@@ -78,6 +79,34 @@ fn steps_per_direction() {
             Cleanup
         ]
     );
+
+    let mut direct = copy.clone();
+    direct.direct = true;
+    assert_eq!(
+        steps(&direct),
+        [Check, CheckDest, Pack, Relay, UnpackRemote, Cleanup]
+    );
+}
+
+#[test]
+fn streaming_needs_two_servers_and_no_local_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = spec(remote_end("/srv/app"), remote_end("/srv"));
+    s.direct = true;
+    assert!(check_spec(&s).is_ok());
+    s.keep_copy = Some(tmp.path().display().to_string());
+    assert!(check_spec(&s).is_err());
+    let mut down = spec(remote_end("/srv/app"), local_end(tmp.path()));
+    down.direct = true;
+    assert!(check_spec(&down).is_err());
+
+    // The stream commands touch only this run's archives.
+    let id = "0123456789ab";
+    assert!(send_command(&remote_archive(id)).is_ok());
+    assert!(read_sum_command(&remote_archive(id)).is_ok());
+    assert!(receive_command(&remote_inbox(id)).is_ok());
+    assert!(receive_command("/etc/passwd").is_err());
+    assert!(send_command("/home/me/.ssh/id_ed25519").is_err());
 }
 
 #[test]
@@ -419,8 +448,12 @@ mod end_to_end {
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
             p
         };
-        // ssh [-t] <destination> <remote command>: runs the last argument.
-        let ssh = write("ssh", r#"for a; do last=$a; done; exec /bin/sh -c "$last""#);
+        // ssh [-t] <destination> <remote command>: runs the last argument. The destination
+        // "nokey" has no key: it only logs in with a prompt, so BatchMode fails.
+        let ssh = write(
+            "ssh",
+            r#"batch=; for a; do [ "$a" = BatchMode=yes ] && batch=1; [ "$a" = nokey ] && [ -n "$batch" ] && { echo 'nokey: Permission denied (publickey,password).' >&2; exit 255; }; last=$a; done; exec /bin/sh -c "$last""#,
+        );
         // scp [-q] <from> <to>, either side possibly "host:/path"
         let scp = write(
             "scp",
@@ -442,6 +475,14 @@ mod end_to_end {
 
     /// Runs `spec`; returns the exit code, the tab's text and the final step statuses.
     fn execute(spec: FolderSpec) -> (Option<u32>, String, Vec<StepStatus>, RunState) {
+        execute_to(spec, "dst")
+    }
+
+    /// [`execute`] with the destination server named `dest`.
+    fn execute_to(
+        spec: FolderSpec,
+        dest: &str,
+    ) -> (Option<u32>, String, Vec<StepStatus>, RunState) {
         let t = tools();
         let manager = Arc::new(TerminalManager::default());
         manager.open_route("route", 80, 24).unwrap();
@@ -454,7 +495,7 @@ mod end_to_end {
             ssh: t.ssh.clone(),
             scp: t.scp.clone(),
             source: matches!(spec.source, Endpoint::Remote { .. }).then(|| conn("src")),
-            dest: matches!(spec.destination, Endpoint::Remote { .. }).then(|| conn("dst")),
+            dest: matches!(spec.destination, Endpoint::Remote { .. }).then(|| conn(dest)),
             on_data: Channel::new(move |b| {
                 if let InvokeResponseBody::Raw(bytes) = b {
                     out.lock().unwrap().extend(bytes);
@@ -654,5 +695,77 @@ mod end_to_end {
             StepStatus::Failed,
             "the destination check: {text}"
         );
+    }
+
+    #[test]
+    fn server_to_server_streaming_directly() {
+        let a = tempfile::tempdir().unwrap();
+        let src = tree(a.path());
+        let b = tempfile::tempdir().unwrap();
+        std::fs::create_dir(b.path().join("site")).unwrap();
+        let mut s = spec(
+            remote_end(&src.display().to_string()),
+            remote_end(&b.path().display().to_string()),
+        );
+        s.direct = true;
+        let (code, text, statuses, state) = execute(s);
+        assert_eq!(code, Some(0), "{text}");
+        assert!(all_done(&statuses), "{statuses:?}\n{text}");
+        assert!(text.contains("nothing is saved on this PC"), "{text}");
+        assert!(text.contains("Checksum OK"), "{text}");
+        let site = b.path().join("site");
+        assert_eq!(
+            std::fs::read(site.join("assets").join("my file.css")).unwrap(),
+            b"body{}"
+        );
+        let mode = std::fs::metadata(site.join("deploy.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o750);
+        assert!(
+            std::fs::read_dir(b.path()).unwrap().any(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("site.bak-")),
+            "the existing folder was moved aside"
+        );
+        assert!(state.local_zip.is_none(), "nothing on this PC");
+        assert!(
+            !std::env::temp_dir()
+                .join(format!("ridgessh-{}.zip", state.id))
+                .exists()
+        );
+        assert!(!Path::new(&remote_archive(&state.id)).exists());
+        assert!(!Path::new(&remote_inbox(&state.id)).exists());
+    }
+
+    #[test]
+    fn streaming_without_a_key_explains_and_keeps_the_archive_for_retry() {
+        let a = tempfile::tempdir().unwrap();
+        let src = tree(a.path());
+        let b = tempfile::tempdir().unwrap();
+        let mut s = spec(
+            remote_end(&src.display().to_string()),
+            remote_end(&b.path().display().to_string()),
+        );
+        s.direct = true;
+        let (code, text, statuses, state) = execute_to(s, "nokey");
+        assert_eq!(code, Some(1), "{text}");
+        let relay = state
+            .steps
+            .iter()
+            .position(|k| *k == StepKind::Relay)
+            .unwrap();
+        assert_eq!(statuses[relay], StepStatus::Failed, "{text}");
+        assert!(text.contains("without a prompt"), "{text}");
+        assert!(text.contains("Permission denied"), "{text}");
+        assert!(state.done.contains(&StepKind::Pack));
+        // The zipped archive waits on the source for Retry; tidy up after the test.
+        let archive = remote_archive(&state.id);
+        assert!(Path::new(&archive).exists());
+        let _ = std::fs::remove_file(&archive);
+        let _ = std::fs::remove_file(format!("{archive}.sum"));
     }
 }

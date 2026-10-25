@@ -39,16 +39,21 @@ export function planSteps(spec: FolderSpec, alias: (id: string) => string): stri
     out.push(
       `Zip on ${where(src, alias)}${spec.sudoSource ? " as root" : ""} into a private temporary file in /tmp${excluded}`,
     );
-    out.push(
-      dst.kind === "remote" && spec.keepCopy
-        ? "Download to this PC (keeping a copy), compare SHA-256 checksums"
-        : "Download to this PC, compare SHA-256 checksums",
-    );
+    if (dst.kind === "remote" && spec.direct)
+      out.push(
+        `Stream from ${where(src, alias)} to ${where(dst, alias)} through this app (nothing is saved here), compare SHA-256 checksums`,
+      );
+    else
+      out.push(
+        dst.kind === "remote" && spec.keepCopy
+          ? "Download to this PC (keeping a copy), compare SHA-256 checksums"
+          : "Download to this PC, compare SHA-256 checksums",
+      );
   } else {
     out.push(`Zip on this PC into a temporary file${excluded}`);
   }
   if (dst.kind === "remote") {
-    out.push(`Upload to ${where(dst, alias)}`);
+    if (!(src.kind === "remote" && spec.direct)) out.push(`Upload to ${where(dst, alias)}`);
     out.push(`Verify the checksum and unpack on the server${spec.sudoDest ? " as root" : ""}`);
     if (spec.owner) out.push(`Set the owner to ${spec.owner}`);
     if (spec.after) out.push(`Run the script after on ${where(dst, alias)}`);
@@ -123,6 +128,7 @@ export interface FolderInitial {
   unpack: boolean;
   keepZip: boolean;
   keepCopy: string | null;
+  direct: boolean;
   existing: ExistingPolicy;
   owner: string;
   excludes: string;
@@ -150,6 +156,7 @@ export function initialFor(
     unpack: false,
     keepZip: true,
     keepCopy: null,
+    direct: false,
     existing: "backup",
     owner: "",
     excludes: "",
@@ -168,6 +175,7 @@ export function initialFromSpec(spec: FolderSpec): FolderInitial | null {
     unpack: spec.unpack,
     keepZip: spec.keepZip,
     keepCopy: spec.keepCopy ?? null,
+    direct: spec.direct ?? false,
     existing: spec.existing,
     owner: spec.owner ?? "",
     excludes: (spec.excludes ?? []).join("\n"),

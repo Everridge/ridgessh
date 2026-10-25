@@ -65,6 +65,7 @@ fn hooks_add_steps_and_are_validated() {
         unpack: false,
         keep_zip: true,
         keep_copy: None,
+        direct: false,
         existing: Existing::Backup,
         owner: None,
         excludes: vec![],

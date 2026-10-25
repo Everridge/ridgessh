@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -12,8 +13,8 @@ use super::{
     EXIT_CHECKSUM, EXIT_EXISTS, EXIT_NO_ACCESS, EXIT_NO_PACKER, EXIT_NO_SPACE, EXIT_NOT_FOUND,
     EXIT_SKIPPED_FILES, EXIT_UNSAFE, Endpoint, Existing, FolderSpec, Manifest, StepKind,
     backup_name, check_command, check_dest_command, cleanup_command, exclude_patterns, find_tar,
-    free_name, free_space, local, owner_command, pack_command, parse_manifest, remote_archive,
-    remote_inbox, sha256_file, source_name, unpack_remote_command, with_sudo,
+    free_name, free_space, local, owner_command, pack_command, parse_manifest, relay,
+    remote_archive, remote_inbox, sha256_file, source_name, unpack_remote_command, with_sudo,
 };
 use crate::error::{AppError, AppResult};
 use crate::terminal::{SpawnRequest, TerminalExit, TerminalManager};
@@ -356,6 +357,7 @@ impl Runner {
                     Some(n) => Err(AppError::Other(format!("scp failed with exit code {n}"))),
                 }
             }
+            StepKind::Relay => self.relay(state),
             StepKind::UnpackRemote => {
                 let dest = self.conn(&self.dest, "destination")?;
                 let m = state
@@ -559,6 +561,80 @@ impl Runner {
         }
         state.local_zip = Some(zip);
         state.local_zip_temp = temp;
+        state.manifest = Some(manifest);
+        Ok(Some(match warning {
+            Some(w) => Outcome::Warning(w),
+            None => Outcome::Ok,
+        }))
+    }
+
+    fn relay(&self, state: &mut RunState) -> StepResult {
+        let src = self.conn(&self.source, "source")?;
+        let dest = self.conn(&self.dest, "destination")?;
+        let archive = remote_archive(&state.id);
+        self.say(&format!(
+            "{DIM}Streaming from {} to {} through this app; nothing is saved on this PC.{RESET}",
+            src.destination, dest.destination
+        ));
+        let mut manifest = relay::fetch_manifest(&self.ssh, src, &archive)?;
+        relay::probe(&self.ssh, dest)?;
+
+        let (manager, route) = (&self.manager, &self.route);
+        let cancelled = move || manager.route_state(route).1;
+        let total = manifest.bytes.max(1);
+        let start = Instant::now();
+        let mut progress = |bytes: u64| {
+            let secs = start.elapsed().as_secs_f64().max(0.001);
+            let line = format!(
+                "\r\x1b[K  {} of {} MB ({}%), {:.1} MB/s",
+                bytes / 1_048_576,
+                manifest.bytes / 1_048_576,
+                bytes * 100 / total,
+                bytes as f64 / 1_048_576.0 / secs
+            );
+            let _ = self
+                .on_data
+                .send(InvokeResponseBody::Raw(line.into_bytes()));
+        };
+        let result = relay::relay(
+            &self.ssh,
+            src,
+            &archive,
+            dest,
+            &remote_inbox(&state.id),
+            &cancelled,
+            &mut progress,
+        );
+        self.say("");
+        let (bytes, actual) = match result? {
+            relay::Relayed::Cancelled => return Ok(None),
+            relay::Relayed::Done { bytes, sha256 } => (bytes, sha256),
+        };
+        if bytes != manifest.bytes {
+            return Err(AppError::Other(format!(
+                "the stream is incomplete ({bytes} of {} bytes)",
+                manifest.bytes
+            )));
+        }
+        let warning = match &manifest.sha256 {
+            Some(expected) if *expected != actual => {
+                return Err(AppError::Other(
+                    "the checksum does not match: the archive was damaged in transit".into(),
+                ));
+            }
+            Some(_) => {
+                self.say(&format!("{GREEN}Checksum OK{RESET} (SHA-256 {actual})"));
+                None
+            }
+            // The destination still checks what it got against what passed through here.
+            None => {
+                manifest.sha256 = Some(actual);
+                Some(
+                    "The source server has no SHA-256 tool, so the stream from it was only checked by size."
+                        .to_string(),
+                )
+            }
+        };
         state.manifest = Some(manifest);
         Ok(Some(match warning {
             Some(w) => Outcome::Warning(w),

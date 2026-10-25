@@ -12,6 +12,7 @@
 pub mod browse;
 pub mod local;
 pub mod recipes;
+pub mod relay;
 pub mod runner;
 
 use std::path::{Path, PathBuf};
@@ -94,6 +95,10 @@ pub struct FolderSpec {
     /// Server → server: also keep the archive in this local folder.
     #[serde(default)]
     pub keep_copy: Option<String>,
+    /// Server → server: stream the archive from one server to the other through this app
+    /// instead of saving it here first. Needs logins without prompts (keys or an agent).
+    #[serde(default)]
+    pub direct: bool,
     #[serde(default)]
     pub existing: Existing,
     /// Server as destination: `chown -R` the unpacked folder (`user` or `user:group`).
@@ -154,6 +159,8 @@ pub enum StepKind {
     Download,
     Unpack,
     Upload,
+    /// Server → server without a copy on this PC (see [`relay`]).
+    Relay,
     UnpackRemote,
     SetOwner,
     /// The source server's script, before zipping.
@@ -173,6 +180,7 @@ impl StepKind {
             StepKind::Download => "Download",
             StepKind::Unpack => "Unpack locally",
             StepKind::Upload => "Upload",
+            StepKind::Relay => "Stream to destination",
             StepKind::UnpackRemote => "Unpack on server",
             StepKind::SetOwner => "Set owner",
             StepKind::Before => "Script before",
@@ -201,11 +209,17 @@ pub fn steps(spec: &FolderSpec) -> Vec<StepKind> {
         out.push(StepKind::Before);
     }
     match spec.source {
+        Remote { .. } if remote_dest && spec.direct => {
+            out.extend([StepKind::Pack, StepKind::Relay])
+        }
         Remote { .. } => out.extend([StepKind::Pack, StepKind::Download]),
         Local { .. } => out.push(StepKind::PackLocal),
     }
     if remote_dest {
-        out.extend([StepKind::Upload, StepKind::UnpackRemote]);
+        if !out.contains(&StepKind::Relay) {
+            out.push(StepKind::Upload);
+        }
+        out.push(StepKind::UnpackRemote);
         if spec.owner.is_some() {
             out.push(StepKind::SetOwner);
         }
@@ -280,6 +294,16 @@ pub fn check_spec(spec: &FolderSpec) -> AppResult<()> {
             ));
         }
         h.check("script after")?;
+    }
+    if spec.direct && !(remote_src && remote_dst) {
+        return Err(AppError::Validation(
+            "streaming directly works between two servers only".into(),
+        ));
+    }
+    if spec.direct && spec.keep_copy.is_some() {
+        return Err(AppError::Validation(
+            "a streamed copy is not stored on this PC, so it cannot keep a local copy".into(),
+        ));
     }
     if (spec.sudo_source && !remote_src) || (spec.sudo_dest && !remote_dst) {
         return Err(AppError::Validation("sudo applies to servers only".into()));
@@ -633,6 +657,37 @@ pub fn exclude_patterns(name: Option<&str>, excludes: &[String]) -> Vec<String> 
         .collect()
 }
 
+/// Prints the archive's `.sum` file (see [`PACK`]).
+pub fn read_sum_command(archive: &str) -> AppResult<String> {
+    own_archive(archive)?;
+    Ok(remote(r#"cat -- "$1.sum""#, &[archive]))
+}
+
+/// Writes the archive to stdout, for streaming.
+pub fn send_command(archive: &str) -> AppResult<String> {
+    own_archive(archive)?;
+    Ok(remote(r#"exec cat -- "$1""#, &[archive]))
+}
+
+/// Saves stdin as the (private) inbox archive, for streaming.
+pub fn receive_command(inbox: &str) -> AppResult<String> {
+    own_archive(inbox)?;
+    Ok(remote(
+        r#"umask 077; rm -f -- "$1" && exec cat > "$1""#,
+        &[inbox],
+    ))
+}
+
+fn own_archive(archive: &str) -> AppResult<()> {
+    if is_own_archive(archive) {
+        Ok(())
+    } else {
+        Err(AppError::Validation(format!(
+            "unexpected archive {archive}"
+        )))
+    }
+}
+
 pub fn cleanup_command(archive: &str) -> AppResult<String> {
     if !is_own_archive(archive) {
         return Err(AppError::Validation(format!(
@@ -782,5 +837,7 @@ pub fn find_tar() -> AppResult<PathBuf> {
 mod flow_tests;
 #[cfg(test)]
 mod phase3_tests;
+#[cfg(test)]
+mod relay_tests;
 #[cfg(test)]
 mod tests;

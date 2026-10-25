@@ -390,6 +390,8 @@ export interface FolderSpec {
   keepZip: boolean;
   /** Server → server: also keep the archive in this local folder. */
   keepCopy?: string | null;
+  /** Server → server: stream through the app instead of saving a copy here (key logins only). */
+  direct?: boolean;
   existing: ExistingPolicy;
   /** Server as destination: chown -R the result (`user` or `user:group`). */
   owner?: string | null;

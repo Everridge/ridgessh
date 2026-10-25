@@ -146,6 +146,7 @@ mod tests {
             unpack: true,
             keep_zip: false,
             keep_copy: None,
+            direct: false,
             existing: Existing::Merge,
             owner: None,
             excludes: vec!["node_modules".into()],

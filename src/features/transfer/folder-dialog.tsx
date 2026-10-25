@@ -123,6 +123,7 @@ function Body({
   const [unpack, setUnpack] = useState(initial.unpack);
   const [keepZip, setKeepZip] = useState(initial.keepZip);
   const [keepCopy, setKeepCopy] = useState(initial.keepCopy);
+  const [direct, setDirect] = useState(initial.direct);
   const [existing, setExisting] = useState<ExistingPolicy>(initial.existing);
   const [owner, setOwner] = useState(initial.owner);
   const [excludes, setExcludes] = useState(initial.excludes);
@@ -155,6 +156,7 @@ function Body({
       unpack: false,
       keepZip: true,
       keepCopy: null,
+      direct: false,
       existing,
       owner: remoteDest && ownerValue ? ownerValue : null,
       excludes: parseExcludes(excludes),
@@ -182,7 +184,8 @@ function Body({
         if (!otherId) return null;
         return {
           ...base,
-          keepCopy,
+          keepCopy: direct ? null : keepCopy,
+          direct,
           source: { ...me, path: remoteSrcPath.trim() },
           destination: {
             kind: "remote",
@@ -199,7 +202,7 @@ function Body({
     spec.source.path !== "" &&
     spec.destination.path !== "" &&
     (!ownerValue || validOwner(ownerValue)) &&
-    keepCopy !== "" &&
+    (direct || keepCopy !== "") &&
     (!remoteSource || hookReady(before)) &&
     (!remoteDest || hookReady(after));
 
@@ -366,6 +369,22 @@ function Body({
               />
             )}
             {mode === "copy" && (
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={direct}
+                  onCheckedChange={(v) => setDirect(v === true)}
+                />
+                <span>
+                  Stream directly between the servers
+                  <span className="block text-xs text-muted-foreground">
+                    Nothing is saved on this PC. Needs key-based logins on both servers: while
+                    streaming there is no terminal for password prompts.
+                  </span>
+                </span>
+              </label>
+            )}
+            {mode === "copy" && !direct && (
               <div className="grid gap-2">
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox

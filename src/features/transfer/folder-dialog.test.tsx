@@ -56,6 +56,19 @@ describe("folder plan helpers", () => {
     expect(validOwner("www-data:www-data")).toBe(true);
     expect(validOwner("a b")).toBe(false);
     expect(validOwner("-R")).toBe(false);
+
+    const direct: FolderSpec = {
+      ...base,
+      direct: true,
+      source: { kind: "remote", hostId: "a", path: "/srv/app" },
+      destination: { kind: "remote", hostId: "b", path: "/srv" },
+    };
+    const streamed = planSteps(direct, alias);
+    expect(streamed).toHaveLength(6);
+    expect(streamed[3]).toBe(
+      "Stream from web to db through this app (nothing is saved here), compare SHA-256 checksums",
+    );
+    expect(streamed.some((s) => s.startsWith("Upload"))).toBe(false);
   });
 });
 
@@ -96,6 +109,7 @@ describe("folder dialog", () => {
         unpack: true,
         keepZip: false,
         keepCopy: null,
+        direct: false,
         existing: "backup",
         owner: null,
         excludes: [],
@@ -169,6 +183,39 @@ describe("folder dialog", () => {
         destination: { kind: "remote", hostId: backend.hosts[1].id, path: "/srv" },
         existing: "stop",
       },
+    });
+  });
+
+  it("streams directly between two servers", async () => {
+    const backend = installFakeBackend({
+      hosts: [{ alias: "web" }, { alias: "db" }],
+      lastRemote: "/srv/app",
+    });
+    const user = renderApp();
+    await screen.findByRole("list", { name: "Hosts" });
+    useUiStore.getState().openFolderTransfer("copy", backend.hosts[0].id);
+
+    const dialog = await screen.findByRole("dialog", { name: "Copy folder between servers" });
+    await user.click(within(dialog).getByRole("combobox", { name: "Destination server" }));
+    await user.click(await screen.findByRole("option", { name: /^db/ }));
+    await user.type(within(dialog).getByLabelText("Destination folder on the server"), "/srv");
+    await user.click(
+      within(dialog).getByRole("checkbox", { name: "Also keep the archive on this PC" }),
+    );
+    await user.click(
+      within(dialog).getByRole("checkbox", { name: /stream directly between the servers/i }),
+    );
+    // Nothing is stored here, so there is no local copy to keep.
+    expect(
+      within(dialog).queryByRole("checkbox", { name: "Also keep the archive on this PC" }),
+    ).not.toBeInTheDocument();
+    const plan = within(dialog).getByRole("list", { name: "What will happen" });
+    expect(plan).toHaveTextContent("Stream from web to db through this app");
+    expect(plan).not.toHaveTextContent("Upload to db");
+    await user.click(within(dialog).getByRole("button", { name: "Copy" }));
+
+    expect(useTerminalStore.getState().tabs[0].job).toMatchObject({
+      spec: { direct: true, keepCopy: null },
     });
   });
 

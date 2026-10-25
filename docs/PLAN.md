@@ -213,6 +213,14 @@ Phases:
 - Recipes are stored in the `folder_recipes` table (migration 004): a name, unique ignoring case, and the spec as JSON. The last run's time and result are recorded. "Folder recipes" in the sidebar runs one as saved, opens one in the transfer dialog to change it for this run (or to update it), or deletes one. A recipe whose server was deleted cannot run.
 - The remote folder browser uses `ssh -o BatchMode=yes` without a console window and lists one folder (`pwd`, then `ls -1Ap`, up to 2000 entries). It only works with key-based logins; for other hosts the path is typed.
 
+**As built (M11 phase 4)**:
+
+- "Stream directly between the servers" (`direct` in the spec, server → server only, not together with a kept local copy) replaces Download + Upload with one **Stream to destination** step (`folder/relay.rs`).
+- The archive is still zipped into `/tmp` on the source first, by the usual Pack step (in the tab, so sudo and its prompt work). Then the step reads its `.sum`, tests the destination login, and runs `ssh A 'cat archive'` and `ssh B 'cat > inbox'` with piped stdio, copying between the two in the app. It counts the bytes, hashes them and shows progress (MB, %, MB/s). Nothing is written to this PC's disk.
+- Both ssh processes run with `BatchMode=yes` and no console window, because their stdio carries the archive and there is no terminal to prompt in. A password-only login fails fast, with an explanation that points to the via-this-PC mode.
+- The size and SHA-256 of the stream are compared with the source's `.sum`. The destination then checks the archive again before unpacking. If the source had no SHA-256 tool, the hash taken in transit is passed on, so the second leg is still verified.
+- Because the source's archive stays in `/tmp` until Clean up, a failed or cancelled stream can be retried from that step without zipping again. That is better than the "no resume" in the original plan. Cancelling (closing the tab) kills both processes.
+
 ## 9. Backups
 
 **Bundle** (`.rsbak`): zip containing
