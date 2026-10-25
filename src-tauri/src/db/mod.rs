@@ -18,6 +18,7 @@ const MIGRATION_SQL: &[&str] = &[
     include_str!("migrations/002_config_tracking.sql"),
     include_str!("migrations/003_drop_backups_table.sql"),
     include_str!("migrations/004_folder_recipes.sql"),
+    include_str!("migrations/005_user_matches.sql"),
 ];
 
 static MIGRATIONS: LazyLock<Migrations<'static>> =

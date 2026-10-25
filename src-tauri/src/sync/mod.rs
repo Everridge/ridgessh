@@ -71,7 +71,7 @@ fn write_config_state(
     if let Some(c) = conn {
         tx.execute(
             "UPDATE hosts SET alias = ?2, hostname = ?3, user = ?4, port = ?5, identity_file = ?6,
-                proxy_jump = ?7, extra_options = ?8, updated_at = ?9 WHERE id = ?1",
+                proxy_jump = ?7, extra_options = ?8, updated_at = ?9, user_matches = ?10 WHERE id = ?1",
             params![
                 id,
                 c.alias,
@@ -81,7 +81,8 @@ fn write_config_state(
                 c.identity_file,
                 c.proxy_jump,
                 serde_json::to_string(&c.extra_options)?,
-                ts
+                ts,
+                serde_json::to_string(&c.user_matches)?
             ],
         )?;
     }
@@ -157,6 +158,9 @@ pub fn run(tx: &Transaction, parsed: &ParsedConfig, main_path: &Path) -> AppResu
         };
         seen.insert(config_key(h));
 
+        if adopt_user_matches(tx, h, &snapshot, ch, &ts)? {
+            continue;
+        }
         let db_conn = h.connection();
         let config_changed = h.config_fingerprint.as_deref() != Some(ch.fingerprint.as_str())
             || h.config_snapshot.as_ref() != Some(&snapshot);
@@ -229,6 +233,55 @@ pub fn run(tx: &Transaction, parsed: &ParsedConfig, main_path: &Path) -> AppResu
     Ok(report)
 }
 
+/// Per-user `Match` blocks are tracked since migration 005; hosts scanned before that have a
+/// snapshot without them. When the blocks are the only difference, take them over into both
+/// the snapshot and the host, and keep any pending edits of the host's own block as they are.
+fn adopt_user_matches(
+    tx: &Transaction,
+    h: &Host,
+    snapshot: &Connection,
+    ch: &ConfigHost,
+    ts: &str,
+) -> AppResult<bool> {
+    let Some(old) = &h.config_snapshot else {
+        return Ok(false);
+    };
+    let without = Connection {
+        user_matches: Vec::new(),
+        ..snapshot.clone()
+    };
+    let applies = !snapshot.user_matches.is_empty()
+        && old.user_matches.is_empty()
+        && h.user_matches.is_empty()
+        && *old == without
+        && h.config_fingerprint.as_deref() == Some(ch.fingerprint.as_str())
+        && h.sync_state != "removed_from_config";
+    if !applies {
+        return Ok(false);
+    }
+    tx.execute(
+        "UPDATE hosts SET user_matches = ?2, config_snapshot = ?3, last_seen_in_config_at = ?4
+         WHERE id = ?1",
+        params![
+            h.id,
+            serde_json::to_string(&snapshot.user_matches)?,
+            serde_json::to_string(snapshot)?,
+            ts
+        ],
+    )?;
+    let after = hosts::get(tx, &h.id)?;
+    history::record(
+        tx,
+        Source::Sync,
+        EntityType::Host,
+        &h.id,
+        Action::Update,
+        Some(h),
+        Some(&after),
+    )?;
+    Ok(true)
+}
+
 fn insert_from_config(
     tx: &Transaction,
     c: &Connection,
@@ -240,8 +293,8 @@ fn insert_from_config(
     tx.execute(
         "INSERT INTO hosts (id, alias, hostname, user, port, identity_file, proxy_jump, extra_options,
             sync_state, config_dirty, config_fingerprint, config_snapshot, config_source,
-            last_seen_in_config_at, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'config_only_new', 0, ?9, ?10, ?11, ?12, ?12, ?12)",
+            last_seen_in_config_at, created_at, updated_at, user_matches)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'config_only_new', 0, ?9, ?10, ?11, ?12, ?12, ?12, ?13)",
         params![
             id,
             c.alias,
@@ -254,7 +307,8 @@ fn insert_from_config(
             ch.fingerprint,
             serde_json::to_string(c)?,
             source,
-            ts
+            ts,
+            serde_json::to_string(&c.user_matches)?
         ],
     )?;
     Ok(id)
@@ -345,7 +399,7 @@ pub fn resolve_conflict(tx: &Transaction, id: &str, keep: Keep) -> AppResult<Hos
             id,
             "UPDATE hosts SET alias = ?2, hostname = ?3, user = ?4, port = ?5, identity_file = ?6,
                 proxy_jump = ?7, extra_options = ?8, sync_state = 'synced', config_dirty = 0,
-                updated_at = ?9
+                updated_at = ?9, user_matches = ?10
              WHERE id = ?1",
             &[
                 &snapshot.alias,
@@ -356,6 +410,7 @@ pub fn resolve_conflict(tx: &Transaction, id: &str, keep: Keep) -> AppResult<Hos
                 &snapshot.proxy_jump,
                 &serde_json::to_string(&snapshot.extra_options)?,
                 &now(),
+                &serde_json::to_string(&snapshot.user_matches)?,
             ],
         )
         .map_err(|e| match e {

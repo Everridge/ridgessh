@@ -14,6 +14,7 @@ fn parsed(text: &str) -> ParsedConfig {
         crate::ssh_config::collect_block_for_tests(&file, block, &mut out);
     }
     out.files.push(file);
+    crate::ssh_config::attach_user_matches(&mut out);
     out
 }
 
@@ -41,6 +42,7 @@ fn edit(db: &Db, alias: &str, f: impl FnOnce(&mut HostInput)) -> Host {
         identity_file: h.identity_file.clone(),
         proxy_jump: h.proxy_jump.clone(),
         extra_options: h.extra_options.clone(),
+        user_matches: h.user_matches.clone(),
         group_id: h.group_id.clone(),
         description: h.description.clone(),
         notes: h.notes.clone(),
@@ -274,4 +276,55 @@ fn sync_writes_audit_entries() {
         (log[0].source.as_str(), log[0].action.as_str()),
         ("sync", "create")
     );
+}
+
+const USERS: &str =
+    "Host a\n  HostName 10.0.0.1\nMatch originalhost a user deploy\n  IdentityFile ~/.ssh/a\n";
+
+#[test]
+fn per_user_blocks_sync_like_the_rest_of_the_connection() {
+    let db = Db::open_in_memory().unwrap();
+    scan(&db, USERS);
+    let h = host(&db, "a");
+    assert_eq!(h.user_matches.len(), 1);
+    assert_eq!(h.user_matches[0].user, "deploy");
+
+    // Changed outside RidgeSSH: taken over like any connection value.
+    let r = scan(&db, &USERS.replace("~/.ssh/a", "~/.ssh/b"));
+    assert_eq!(r.updated, ["a"]);
+    assert_eq!(
+        host(&db, "a").user_matches[0].identity_file.as_deref(),
+        Some("~/.ssh/b")
+    );
+
+    // Edited in the app: a pending change until written.
+    assert!(edit(&db, "a", |i| i.user_matches.clear()).config_dirty);
+}
+
+#[test]
+fn hosts_scanned_before_user_blocks_were_tracked_take_them_over() {
+    let db = Db::open_in_memory().unwrap();
+    scan(&db, USERS);
+    edit(&db, "a", |i| i.port = Some(2222));
+    // As an older version saved it: no users in the host or its snapshot.
+    db.tx(|tx| {
+        let h = hosts::list(tx)?.remove(0);
+        let mut snapshot = h.config_snapshot.clone().unwrap();
+        snapshot.user_matches.clear();
+        tx.execute(
+            "UPDATE hosts SET user_matches = '[]', config_snapshot = ?2 WHERE id = ?1",
+            params![h.id, serde_json::to_string(&snapshot)?],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(host(&db, "a").user_matches.is_empty());
+
+    let r = scan(&db, USERS);
+    assert!(!r.changed(), "no conflict, nothing to review: {r:?}");
+    let h = host(&db, "a");
+    assert_eq!(h.user_matches.len(), 1);
+    assert_eq!(h.config_snapshot.unwrap().user_matches.len(), 1);
+    assert!(h.config_dirty, "the pending port edit stays");
+    assert_eq!(h.sync_state, "config_only_new", "unchanged");
 }

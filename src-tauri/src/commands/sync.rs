@@ -35,15 +35,6 @@ pub async fn sync_run(state: State<'_, AppState>) -> AppResult<SyncReport> {
     Ok(report)
 }
 
-/// Per-user `Match originalhost <alias> user <name>` blocks in the live config, read fresh
-/// so they follow edits made outside RidgeSSH. Read-only; never writes the config.
-#[tauri::command]
-pub async fn config_variants(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<ssh_config::UserVariant>> {
-    Ok(ssh_config::load(&state.paths.ssh_config)?.variants)
-}
-
 /// The report of the last scan in this session (rules and warnings for the review dialog).
 #[tauri::command]
 pub fn sync_last(state: State<'_, AppState>) -> AppResult<Option<SyncReport>> {

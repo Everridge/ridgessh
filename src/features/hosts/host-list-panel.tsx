@@ -23,6 +23,7 @@ import {
   StarIcon,
   Trash2Icon,
   UploadIcon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -449,6 +450,9 @@ function HostRow({
               <ContextMenuItem onSelect={() => openHostForm(host.id)}>
                 <PencilIcon /> Edit
               </ContextMenuItem>
+              <ContextMenuItem onSelect={() => openHostForm(host.id, "users")}>
+                <UsersIcon /> {variants.length > 0 ? "Edit users…" : "Add user…"}
+              </ContextMenuItem>
               <ContextMenuItem
                 onSelect={() => fav.mutate({ id: host.id, favorite: !host.favorite })}
               >
@@ -515,7 +519,7 @@ function VariantRow({
           <div
             role="button"
             tabIndex={0}
-            title={`ssh ${target} (Match block at line ${variant.line})`}
+            title={`ssh ${target}`}
             onClick={() => selectHost(host.id)}
             onDoubleClick={() => connect(host, user)}
             onKeyDown={(e) => {
@@ -539,6 +543,9 @@ function VariantRow({
         <ContextMenuContent>
           <ContextMenuItem onSelect={() => connect(host, user)}>
             <SquareTerminalIcon /> Connect as {user}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => useUiStore.getState().openHostForm(host.id, "users")}>
+            <UsersIcon /> Edit users…
           </ContextMenuItem>
           <ContextMenuItem onSelect={() => connectExternal(host, user)}>
             <ExternalLinkIcon /> Open in external terminal

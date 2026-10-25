@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -22,7 +23,6 @@ export const keys = {
   settings: ["settings"] as const,
   backupStatus: ["backup-status"] as const,
   backups: ["backups"] as const,
-  variants: ["config-variants"] as const,
   recipes: ["folder-recipes"] as const,
 };
 
@@ -35,7 +35,6 @@ export function invalidateAll(qc: QueryClient) {
     keys.renames,
     keys.configCandidates,
     keys.configPreview,
-    keys.variants,
     keys.recipes,
     // Edits can trigger automatic backups.
     keys.backupStatus,
@@ -57,10 +56,24 @@ export const useTags = () => useQuery({ queryKey: keys.tags, queryFn: api.tagsLi
 
 export const useHostsData = () => useHosts().data ?? EMPTY;
 
-const NO_VARIANTS: UserVariant[] = [];
-/** Per-user `Match` blocks of the live config (read-only). */
-export const useVariants = () =>
-  useQuery({ queryKey: keys.variants, queryFn: api.configVariants }).data ?? NO_VARIANTS;
+/** The users of every live host (their per-user `Match` blocks, as saved in RidgeSSH). */
+export function useVariants(): UserVariant[] {
+  const hosts = useHostsData();
+  return useMemo(
+    () =>
+      hosts
+        .filter((h) => !h.deletedAt)
+        .flatMap((h) =>
+          h.userMatches.map((m) => ({
+            alias: configAlias(h),
+            user: m.user,
+            identityFile: m.identityFile,
+            options: m.extraOptions,
+          })),
+        ),
+    [hosts],
+  );
+}
 
 /** The config alias a host's `Match originalhost` blocks name. */
 export const configAlias = (host: Pick<Host, "alias" | "configSnapshot">) =>

@@ -136,6 +136,8 @@ DB-side edits to connection fields mark the host as having **pending config chan
 7. **Windows ACL**: OpenSSH for Windows refuses configs with loose permissions. Copy the original file's ACL onto the new file (or write in place after backup); on macOS keep mode `0600`.
 8. Audit entry + mark hosts `synced`.
 
+**Per-user `Match` blocks (as built)**: `Match originalhost <alias> user <name>` blocks (criteria in either order) belong to the host `<alias>`. They are part of its connection as `user_matches` (`hosts.user_matches`, migration 005: user, the first `IdentityFile`, other lines). They sync, conflict, show as pending and go into history, export and revert like the other connection fields. Users are edited on the host form's **Users** tab, and a regular host gets its first one there. The writer rewrites only the lines that change, renames a block's header when the host is renamed (keeping the criteria order), deletes the blocks of removed users or a removed host, and adds new blocks after the host's last one (or right after its `Host` block). The verifier reads the result back and checks every host's users. A host whose `Match` blocks changed outside since the last scan, or are in an included file, is blocked until a re-scan. Hosts scanned before migration 005 take their blocks over on the next scan without a conflict, and their pending edits are kept. With pending edits, connecting as `user@alias` passes that user's options with `-o`, before the host's own. Other `Match` blocks stay read-only rules.
+
 ## 6. Terminal
 
 - Each tab = one PTY running `ssh.exe <alias>` (so it uses the real config, agent, ProxyJump).

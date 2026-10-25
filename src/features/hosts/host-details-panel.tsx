@@ -6,6 +6,7 @@ import {
   MousePointerClickIcon,
   PencilIcon,
   PlayIcon,
+  PlusIcon,
   RotateCcwIcon,
   SquareTerminalIcon,
   StarIcon,
@@ -213,11 +214,21 @@ function Details({ host }: { host: Host }) {
                 ))}
               </Section>
 
-              {variants.length > 0 && !trashed && (
+              {!trashed && (
                 <div className="grid gap-1.5">
-                  <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                    Users (Match blocks)
-                  </h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                      Users (Match blocks)
+                    </h3>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => openHostForm(host.id, "users")}
+                    >
+                      {variants.length > 0 ? <PencilIcon /> : <PlusIcon />}
+                      {variants.length > 0 ? "Edit users" : "Add user"}
+                    </Button>
+                  </div>
                   <ul className="grid gap-1" aria-label="Users">
                     {variants.map((v) => (
                       <li key={v.user} className="flex items-start gap-2 text-sm">
@@ -226,8 +237,10 @@ function Details({ host }: { host: Host }) {
                             {v.user}@{configAlias(host)}
                           </div>
                           <div className="truncate font-mono text-xs text-muted-foreground">
-                            {v.options.map((o) => `${o.key} ${o.value}`).join(" · ") ||
-                              "No options"}
+                            {[
+                              ...(v.identityFile ? [`IdentityFile ${v.identityFile}`] : []),
+                              ...v.options.map((o) => `${o.key} ${o.value}`),
+                            ].join(" · ") || "No options"}
                           </div>
                         </div>
                         <Button
@@ -251,8 +264,9 @@ function Details({ host }: { host: Host }) {
                     ))}
                   </ul>
                   <p className="text-xs text-muted-foreground">
-                    Read from ~/.ssh/config. Connecting runs ssh user@{configAlias(host)}, so
-                    OpenSSH applies the matching block.
+                    {variants.length > 0
+                      ? `Connecting runs ssh user@${configAlias(host)}, so OpenSSH applies that user's Match block.`
+                      : "Log in as other users of this server, each with its own key."}
                   </p>
                 </div>
               )}

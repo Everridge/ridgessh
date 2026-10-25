@@ -165,7 +165,6 @@ pub fn run() {
             commands::folder::recipes_list,
             commands::folder::recipe_save,
             commands::folder::recipe_delete,
-            commands::sync::config_variants,
             commands::sync::sync_rename_suggestions,
             commands::sync::sync_acknowledge,
             commands::sync::sync_keep_db_only,

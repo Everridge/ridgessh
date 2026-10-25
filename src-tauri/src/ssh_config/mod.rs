@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::db::hosts::{Connection, Directive};
+use crate::db::hosts::{Connection, Directive, UserMatch};
 use crate::error::{AppError, AppResult};
 use crate::security::{validate_alias, validate_user};
 use lexer::{Line, LineKind, split_args, unquote};
@@ -170,6 +170,8 @@ pub struct ConfigHost {
     pub identity_file: Option<String>,
     pub proxy_jump: Option<String>,
     pub extra_options: Vec<Directive>,
+    /// Its per-user `Match` blocks (see [`UserVariant`]), from any file, in config order.
+    pub user_matches: Vec<UserMatch>,
     pub source: PathBuf,
     /// 1-based line of the `Host` header.
     pub line: usize,
@@ -189,7 +191,8 @@ pub struct RuleBlock {
 
 /// A `Match originalhost <alias> user <name>` block (criteria in either order): the settings
 /// for one user of a managed host, typically its own `IdentityFile`. It applies when
-/// connecting as `ssh name@alias`, so that is how RidgeSSH connects to it. Read-only.
+/// connecting as `ssh name@alias`, so that is how RidgeSSH connects to it. Edited as part of
+/// the host ([`ConfigHost::user_matches`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserVariant {
@@ -246,7 +249,39 @@ pub fn load(path: &Path) -> AppResult<ParsedConfig> {
     let base = path.parent().map(Path::to_path_buf).unwrap_or_default();
     let mut seen = HashSet::new();
     load_file(path, &base, 0, &mut seen, &mut out)?;
+    attach_user_matches(&mut out);
     Ok(out)
+}
+
+/// Gives each host its per-user blocks. Blocks for an alias no host has stay rules only.
+pub fn attach_user_matches(parsed: &mut ParsedConfig) {
+    for h in &mut parsed.hosts {
+        h.user_matches = parsed
+            .variants
+            .iter()
+            .filter(|v| v.alias == h.alias)
+            .map(UserVariant::user_match)
+            .collect();
+    }
+}
+
+impl UserVariant {
+    pub fn user_match(&self) -> UserMatch {
+        let mut identity = None;
+        let mut extra_options = Vec::new();
+        for d in &self.options {
+            if identity.is_none() && d.key.eq_ignore_ascii_case("identityfile") {
+                identity = Some(unquote(&d.value));
+            } else {
+                extra_options.push(d.clone());
+            }
+        }
+        UserMatch {
+            user: self.user.clone(),
+            identity_file: identity,
+            extra_options,
+        }
+    }
 }
 
 /// Parses one config file on its own, without following `Include` (used for files from
@@ -266,6 +301,7 @@ pub fn parse_single(path: &Path, text: &str) -> ParsedConfig {
         collect_block(&file, block, &mut out);
     }
     out.files.push(file);
+    attach_user_matches(&mut out);
     out
 }
 
@@ -355,7 +391,7 @@ fn is_concrete_alias(pattern: &str) -> bool {
     validate_alias(pattern).is_ok()
 }
 
-fn collect_block(file: &ConfigFile, block: &Block, out: &mut ParsedConfig) {
+pub(crate) fn collect_block(file: &ConfigFile, block: &Block, out: &mut ParsedConfig) {
     let rule = |kind, header: String| RuleBlock {
         kind,
         header,
@@ -489,6 +525,7 @@ pub fn extract_host(
         identity_file: None,
         proxy_jump: None,
         extra_options: Vec::new(),
+        user_matches: Vec::new(),
         source: file.path.clone(),
         line: block.start + 1,
         fingerprint: fingerprint(file, block),
@@ -530,6 +567,7 @@ impl ConfigHost {
             identity_file: self.identity_file.clone(),
             proxy_jump: self.proxy_jump.clone(),
             extra_options: self.extra_options.clone(),
+            user_matches: self.user_matches.clone(),
         }
     }
 }

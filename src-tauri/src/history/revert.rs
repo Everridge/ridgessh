@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Action, AuditEntry, EntityType, Source};
 use crate::db::groups::{self, GroupInput};
-use crate::db::hosts::{self, Directive, HostField, HostInput};
+use crate::db::hosts::{self, Directive, HostField, HostInput, UserMatch};
 use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::scripts::{self, ScriptInput};
@@ -37,6 +37,7 @@ struct HostSnapshot {
     identity_file: Option<String>,
     proxy_jump: Option<String>,
     extra_options: Vec<Directive>,
+    user_matches: Vec<UserMatch>,
     group_id: Option<String>,
     description: String,
     notes: String,
@@ -177,6 +178,7 @@ fn apply_host(tx: &Transaction, id: &str, snapshot: Option<&serde_json::Value>) 
         identity_file: s.identity_file,
         proxy_jump: s.proxy_jump,
         extra_options: s.extra_options,
+        user_matches: s.user_matches,
         group_id,
         description: s.description,
         notes: s.notes,

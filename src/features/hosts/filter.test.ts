@@ -23,6 +23,7 @@ const host = (alias: string, over: Partial<Host> = {}): Host => ({
   identityFile: null,
   proxyJump: null,
   extraOptions: [],
+  userMatches: [],
   groupId: null,
   description: "",
   notes: "",

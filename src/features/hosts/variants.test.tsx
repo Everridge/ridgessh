@@ -3,27 +3,29 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "@/components/app-providers";
 import { useTerminalStore } from "@/features/terminal/store";
-import type { UserVariant } from "@/lib/ipc";
+import type { UserMatch } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
 import { installFakeBackend, type FakeSeed } from "@/test/fake-backend";
 import App from "@/App";
+import { toFormValues, toHostInput } from "./host-form";
 
 vi.mock("@/features/terminal/terminal-view", () => ({ TerminalView: () => null }));
 
-const variant = (user: string, key: string, line: number): UserVariant => ({
-  alias: "devbox",
+const userMatch = (user: string, key: string): UserMatch => ({
   user,
   identityFile: `c:\\Users\\me\\.ssh\\${key}`,
-  options: [{ key: "IdentityFile", value: `c:\\Users\\me\\.ssh\\${key}` }],
-  source: "C:\\Users\\me\\.ssh\\config",
-  line,
+  extraOptions: [],
 });
+
+const users = [userMatch("tom", "devbox"), userMatch("deploy", "devbox_deploy")];
 
 const seed = (): FakeSeed => ({
   hosts: [
     {
       alias: "devbox",
       hostname: "203.0.113.10",
+      syncState: "synced",
+      userMatches: users,
       configSnapshot: {
         alias: "devbox",
         hostname: "203.0.113.10",
@@ -32,11 +34,11 @@ const seed = (): FakeSeed => ({
         identityFile: null,
         proxyJump: null,
         extraOptions: [],
+        userMatches: users,
       },
     },
     { alias: "web", hostname: "10.0.0.1" },
   ],
-  variants: [variant("tom", "devbox", 235), variant("deploy", "devbox_deploy", 232)],
 });
 
 function renderApp() {
@@ -111,6 +113,70 @@ describe("per-user Match blocks", () => {
     useUiStore.getState().openTransfer(backend.hosts[0].id, "download", "tom");
     const dialog = await screen.findByRole("dialog", { name: "Copy files — tom@devbox" });
     expect(within(dialog).getByRole("combobox", { name: "Connect as" })).toHaveTextContent("tom");
+  });
+});
+
+describe("editing users", () => {
+  it("changes, removes and adds users of a host", async () => {
+    const backend = installFakeBackend(seed());
+    const user = renderApp();
+    await screen.findByRole("list", { name: "Users of devbox" });
+    useUiStore.getState().openHostForm(backend.hosts[0].id, "users");
+
+    const dialog = await screen.findByRole("dialog", { name: "Edit devbox" });
+    const list = within(dialog).getByRole("list", { name: "Users" });
+    expect(within(list).getByLabelText("User 1")).toHaveValue("tom");
+    expect(within(dialog).getByText(/Match originalhost devbox user/)).toBeInTheDocument();
+
+    await user.click(within(list).getByRole("button", { name: "Remove user 1" }));
+    const key = within(list).getByLabelText("Identity file of user 1");
+    await user.clear(key);
+    await user.type(key, "~/.ssh/deploy2");
+    await user.click(within(dialog).getByRole("button", { name: "Add user" }));
+    await user.type(within(list).getByLabelText("User 2"), "ops");
+    await user.type(within(list).getByLabelText("Identity file of user 2"), "~/.ssh/ops");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Edit devbox" })).not.toBeInTheDocument(),
+    );
+    const saved = backend.calls.find((c) => c.cmd === "host_update")!;
+    expect((saved.args.input as { userMatches: UserMatch[] }).userMatches).toEqual([
+      { user: "deploy", identityFile: "~/.ssh/deploy2", extraOptions: [] },
+      { user: "ops", identityFile: "~/.ssh/ops", extraOptions: [] },
+    ]);
+    const rows = within(await screen.findByRole("list", { name: "Users of devbox" }));
+    await waitFor(() => expect(rows.getByText("ops@devbox")).toBeInTheDocument());
+    expect(rows.queryByText("tom@devbox")).not.toBeInTheDocument();
+  });
+
+  it("adds the first user to a regular host and checks the names", async () => {
+    const backend = installFakeBackend(seed());
+    const user = renderApp();
+    await screen.findByRole("list", { name: "Hosts" });
+    useUiStore.getState().openHostForm(backend.hosts[1].id, "users");
+
+    const dialog = await screen.findByRole("dialog", { name: "Edit web" });
+    expect(within(dialog).getByText(/connects only as its own user/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Add user" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add user" }));
+    await user.type(within(dialog).getByLabelText("User 1"), "app");
+    await user.type(within(dialog).getByLabelText("User 2"), "app");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByText("app is listed twice")).toBeInTheDocument();
+    expect(backend.calls.some((c) => c.cmd === "host_update")).toBe(false);
+
+    await user.click(within(dialog).getByRole("button", { name: "Remove user 2" }));
+    await user.type(within(dialog).getByLabelText("Identity file of user 1"), "~/.ssh/web_app");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("list", { name: "Users of web" })).toHaveTextContent("app@web");
+  });
+
+  it("keep their other options through single-field edits", () => {
+    const host = installFakeBackend(seed()).hosts[0];
+    const kept = { ...users[0], extraOptions: [{ key: "ForwardAgent", value: "yes" }] };
+    const input = toHostInput(toFormValues({ ...host, userMatches: [kept] }));
+    expect(input.userMatches).toEqual([kept]);
   });
 });
 

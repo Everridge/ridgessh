@@ -22,7 +22,20 @@ pub struct HostField {
     pub value: String,
 }
 
-/// The connection part of a host: what maps to its `Host` block in ssh_config.
+/// One user's own settings for a host: a `Match originalhost <alias> user <user>` block in
+/// ssh_config, used when connecting as `user@alias` (typically the user's own key).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UserMatch {
+    pub user: String,
+    /// The block's first `IdentityFile`.
+    pub identity_file: Option<String>,
+    /// Every other line of the block, in config order.
+    pub extra_options: Vec<Directive>,
+}
+
+/// The connection part of a host: what maps to its `Host` block in ssh_config, plus the
+/// per-user `Match` blocks that belong to it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Connection {
@@ -33,6 +46,8 @@ pub struct Connection {
     pub identity_file: Option<String>,
     pub proxy_jump: Option<String>,
     pub extra_options: Vec<Directive>,
+    #[serde(default)]
+    pub user_matches: Vec<UserMatch>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -46,6 +61,7 @@ pub struct Host {
     pub identity_file: Option<String>,
     pub proxy_jump: Option<String>,
     pub extra_options: Vec<Directive>,
+    pub user_matches: Vec<UserMatch>,
     pub group_id: Option<String>,
     pub description: String,
     pub notes: String,
@@ -81,6 +97,7 @@ pub struct HostInput {
     pub identity_file: Option<String>,
     pub proxy_jump: Option<String>,
     pub extra_options: Vec<Directive>,
+    pub user_matches: Vec<UserMatch>,
     pub group_id: Option<String>,
     pub description: String,
     pub notes: String,
@@ -93,7 +110,7 @@ pub struct HostInput {
 const COLUMNS: &str = "id, alias, hostname, user, port, identity_file, proxy_jump, extra_options,
     group_id, description, notes, color, favorite, sync_state, config_dirty,
     last_seen_in_config_at, removed_from_config_at, last_connected_at, deleted_at,
-    created_at, updated_at, config_snapshot, config_source, config_fingerprint";
+    created_at, updated_at, config_snapshot, config_source, config_fingerprint, user_matches";
 
 fn from_row(r: &Row) -> rusqlite::Result<Host> {
     let extra: String = r.get(7)?;
@@ -106,6 +123,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Host> {
         identity_file: r.get(5)?,
         proxy_jump: r.get(6)?,
         extra_options: serde_json::from_str(&extra).unwrap_or_default(),
+        user_matches: serde_json::from_str(&r.get::<_, String>(24)?).unwrap_or_default(),
         group_id: r.get(8)?,
         description: r.get(9)?,
         notes: r.get(10)?,
@@ -232,20 +250,7 @@ fn validate(input: &mut HostInput) -> AppResult<()> {
         return Err(AppError::Validation("port must be 1–65535".into()));
     }
 
-    input.extra_options.retain(|d| !d.key.trim().is_empty());
-    for d in &mut input.extra_options {
-        d.key = d.key.trim().to_string();
-        d.value = d.value.trim().to_string();
-        if !d.key.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return Err(AppError::Validation(format!(
-                "invalid option name: {:?}",
-                d.key
-            )));
-        }
-        if d.value.chars().any(char::is_control) {
-            return Err(AppError::Validation(format!("invalid value for {}", d.key)));
-        }
-    }
+    validate_options(&mut input.extra_options)?;
 
     input
         .fields
@@ -259,7 +264,58 @@ fn validate(input: &mut HostInput) -> AppResult<()> {
         }
     }
 
+    validate_user_matches(&mut input.user_matches)?;
+
     input.description = input.description.trim().to_string();
+    Ok(())
+}
+
+/// Per-user blocks: a valid, distinct user each; values that stay one config line.
+fn validate_user_matches(matches: &mut Vec<UserMatch>) -> AppResult<()> {
+    matches.retain(|m| {
+        !m.user.trim().is_empty()
+            || m.identity_file
+                .as_deref()
+                .is_some_and(|f| !f.trim().is_empty())
+    });
+    let mut seen = std::collections::HashSet::new();
+    for m in matches.iter_mut() {
+        m.user = m.user.trim().to_string();
+        crate::security::validate_user(&m.user)
+            .map_err(|_| AppError::Validation(format!("invalid user name {:?}", m.user)))?;
+        if !seen.insert(m.user.clone()) {
+            return Err(AppError::Validation(format!(
+                "user {} is listed twice",
+                m.user
+            )));
+        }
+        m.identity_file = clean(&m.identity_file);
+        check_config_value("identity file", &m.identity_file, true)?;
+        validate_options(&mut m.extra_options)?;
+    }
+    Ok(())
+}
+
+/// `Key value` lines without a dedicated field.
+fn validate_options(options: &mut Vec<Directive>) -> AppResult<()> {
+    options.retain(|d| !d.key.trim().is_empty());
+    for d in options {
+        d.key = d.key.trim().to_string();
+        d.value = d.value.trim().to_string();
+        // `Host` and `Match` would start a new block and change the rest of the file.
+        if !d.key.chars().all(|c| c.is_ascii_alphanumeric())
+            || d.key.eq_ignore_ascii_case("host")
+            || d.key.eq_ignore_ascii_case("match")
+        {
+            return Err(AppError::Validation(format!(
+                "invalid option name: {:?}",
+                d.key
+            )));
+        }
+        if d.value.chars().any(char::is_control) {
+            return Err(AppError::Validation(format!("invalid value for {}", d.key)));
+        }
+    }
     Ok(())
 }
 
@@ -297,8 +353,9 @@ pub fn create(tx: &Transaction, mut input: HostInput, source: Source) -> AppResu
     let ts = now();
     tx.execute(
         "INSERT INTO hosts (id, alias, hostname, user, port, identity_file, proxy_jump, extra_options,
-            group_id, description, notes, color, favorite, sync_state, config_dirty, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'db_only', 0, ?14, ?14)",
+            group_id, description, notes, color, favorite, sync_state, config_dirty, created_at, updated_at,
+            user_matches)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'db_only', 0, ?14, ?14, ?15)",
         params![
             id,
             input.alias,
@@ -313,7 +370,8 @@ pub fn create(tx: &Transaction, mut input: HostInput, source: Source) -> AppResu
             input.notes,
             input.color,
             input.favorite,
-            ts
+            ts,
+            serde_json::to_string(&input.user_matches)?
         ],
     )
     .map_err(map_unique(&input.alias))?;
@@ -341,6 +399,7 @@ impl Host {
             identity_file: self.identity_file.clone(),
             proxy_jump: self.proxy_jump.clone(),
             extra_options: self.extra_options.clone(),
+            user_matches: self.user_matches.clone(),
         }
     }
 }
@@ -355,6 +414,7 @@ impl HostInput {
             identity_file: self.identity_file.clone(),
             proxy_jump: self.proxy_jump.clone(),
             extra_options: self.extra_options.clone(),
+            user_matches: self.user_matches.clone(),
         }
     }
 }
@@ -376,7 +436,7 @@ pub fn update(tx: &Transaction, id: &str, mut input: HostInput, source: Source) 
     tx.execute(
         "UPDATE hosts SET alias = ?2, hostname = ?3, user = ?4, port = ?5, identity_file = ?6,
             proxy_jump = ?7, extra_options = ?8, group_id = ?9, description = ?10, notes = ?11,
-            color = ?12, favorite = ?13, config_dirty = ?14, updated_at = ?15
+            color = ?12, favorite = ?13, config_dirty = ?14, updated_at = ?15, user_matches = ?16
          WHERE id = ?1",
         params![
             id,
@@ -393,7 +453,8 @@ pub fn update(tx: &Transaction, id: &str, mut input: HostInput, source: Source) 
             input.color,
             input.favorite,
             dirty,
-            now()
+            now(),
+            serde_json::to_string(&input.user_matches)?
         ],
     )
     .map_err(map_unique(&input.alias))?;

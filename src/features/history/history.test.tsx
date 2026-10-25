@@ -151,6 +151,7 @@ describe("history", () => {
             identityFile: null,
             proxyJump: null,
             extraOptions: [],
+            userMatches: [],
           },
         },
       ],

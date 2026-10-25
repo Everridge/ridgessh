@@ -62,6 +62,7 @@ impl Env {
             identity_file: h.identity_file.clone(),
             proxy_jump: h.proxy_jump.clone(),
             extra_options: h.extra_options.clone(),
+            user_matches: h.user_matches.clone(),
             notes: h.notes.clone(),
             ..Default::default()
         };
@@ -367,4 +368,57 @@ fn previous_copies_are_pruned() {
         .unwrap()
         .count();
     assert_eq!(n, KEEP_BACKUPS);
+}
+
+const WITH_USERS: &str = "Host web\n  HostName 10.0.0.1\n\nMatch originalhost web user deploy\n  IdentityFile ~/.ssh/web_deploy\n\nHost db\n  HostName 10.0.0.2\n";
+
+fn user_match(user: &str, key: &str) -> hosts::UserMatch {
+    hosts::UserMatch {
+        user: user.into(),
+        identity_file: Some(key.into()),
+        extra_options: vec![],
+    }
+}
+
+#[test]
+fn user_blocks_are_edited_through_the_host_and_written() {
+    let env = Env::new(Some(WITH_USERS));
+    assert_eq!(env.host("web").user_matches.len(), 1);
+    // A regular host gets its first per-user block as a pending change like any other.
+    let db = env.edit("db", |i| {
+        i.user_matches.push(user_match("app", "~/.ssh/db_app"))
+    });
+    assert!(db.config_dirty);
+    let web = env.edit("web", |i| {
+        i.user_matches[0].identity_file = Some("~/.ssh/web_deploy2".into())
+    });
+    assert!(web.config_dirty);
+    assert_eq!(
+        env.text(),
+        WITH_USERS,
+        "nothing is written before confirming"
+    );
+
+    env.write(&[change(&db, Op::Update), change(&web, Op::Update)]);
+    assert_eq!(
+        env.text(),
+        WITH_USERS.replace("web_deploy", "web_deploy2")
+            + "\nMatch originalhost db user app\n  IdentityFile ~/.ssh/db_app\n"
+    );
+    assert!(!env.host("db").config_dirty);
+    assert!(!env.host("web").config_dirty);
+    assert!(!env.scan().changed());
+}
+
+#[test]
+fn user_blocks_changed_outside_since_scan_are_blocked() {
+    let env = Env::new(Some(WITH_USERS));
+    let h = env.edit("web", |i| i.port = Some(2222));
+    fs::write(env.cfg(), WITH_USERS.replace("web_deploy", "other")).unwrap();
+    let c = &env.candidates()[0];
+    assert!(
+        c.blocked.as_deref().unwrap().contains("Match blocks"),
+        "{c:?}"
+    );
+    assert!(env.preview(&[change(&h, Op::Update)]).is_err());
 }

@@ -17,6 +17,7 @@ describe("compareWithConfig", () => {
         identityFile: null,
         proxyJump: null,
         extraOptions: [],
+        userMatches: [],
       },
     });
     const diff = compareWithConfig(h).filter((r) => r.differs);

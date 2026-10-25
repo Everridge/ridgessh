@@ -25,7 +25,6 @@ import type {
   Settings,
   SettingsView,
   SyncReport,
-  UserVariant,
   FolderRecipe,
   FolderSpec,
 } from "@/lib/ipc";
@@ -55,8 +54,6 @@ export interface FakeSeed {
   /** What `import_preview` shows, and the password an export source needs. */
   importPreview?: ImportPreview;
   importPassword?: string;
-  /** Per-user Match blocks of the config. */
-  variants?: UserVariant[];
   recipes?: FolderRecipe[];
   /** What `folder_browse` lists: absolute path → entries. */
   remoteTree?: Record<string, { name: string; dir: boolean }[]>;
@@ -358,8 +355,6 @@ export function installFakeBackend(seed: FakeSeed = {}) {
       }
       case "folder_last":
         return { remote: seed.lastRemote ?? null, dest: null, local: null };
-      case "config_variants":
-        return seed.variants ?? [];
       case "host_activity":
         return [];
       case "sync_run":
@@ -504,6 +499,7 @@ export function installFakeBackend(seed: FakeSeed = {}) {
                 identityFile: h.identityFile,
                 proxyJump: h.proxyJump,
                 extraOptions: h.extraOptions,
+                userMatches: h.userMatches,
               },
             });
         }
@@ -569,6 +565,7 @@ export function makeHost(over: Partial<Host> = {}): Host {
     identityFile: null,
     proxyJump: null,
     extraOptions: [],
+    userMatches: [],
     groupId: null,
     description: "",
     notes: "",

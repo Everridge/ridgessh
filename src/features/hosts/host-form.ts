@@ -12,6 +12,38 @@ const configValue = (label: string, allowSpaces = false) =>
 
 const pair = z.object({ key: z.string(), value: z.string() });
 
+/** A user name as `validate_user` accepts it: no spaces, `@`, wildcards or leading `-`. */
+export const validUserName = (u: string) => u !== "" && !/^-|[\s@*?!"',]/.test(u);
+
+/** One per-user block. Its other options are kept as they are (not edited here). */
+const userMatch = z.object({
+  user: z.string(),
+  identityFile: z.string(),
+  extraOptions: z.array(pair),
+});
+
+const userMatches = z.array(userMatch).superRefine((list, ctx) => {
+  const seen = new Set<string>();
+  list.forEach((m, i) => {
+    const user = m.user.trim();
+    const key = m.identityFile.trim();
+    if (user === "" && key === "" && m.extraOptions.length === 0) return; // an empty row
+    if (!validUserName(user)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [i, "user"],
+        message: user === "" ? "Enter the user name" : "Not a valid user name",
+      });
+    } else if (seen.has(user)) {
+      ctx.addIssue({ code: "custom", path: [i, "user"], message: `${user} is listed twice` });
+    }
+    seen.add(user);
+    // eslint-disable-next-line no-control-regex
+    if (key.startsWith("-") || /[\x00-\x1f\x7f]/.test(key))
+      ctx.addIssue({ code: "custom", path: [i, "identityFile"], message: "Invalid identity file" });
+  });
+});
+
 /** Mirrors the backend validation in `src-tauri/src/db/hosts.rs` for instant feedback. */
 export const hostFormSchema = z.object({
   alias: configValue("Alias")
@@ -36,6 +68,7 @@ export const hostFormSchema = z.object({
       (fs) => fs.every((f) => f.key.trim() !== "" || f.value.trim() === ""),
       "Every custom field needs a name",
     ),
+  userMatches,
   extraOptions: z
     .array(pair)
     .refine(
@@ -61,6 +94,11 @@ export function toFormValues(h?: Host, defaults?: { groupId?: string | null }): 
     tags: h?.tags.map((t) => t.name) ?? [],
     fields: h?.fields ?? [],
     extraOptions: h?.extraOptions ?? [],
+    userMatches: (h?.userMatches ?? []).map((m) => ({
+      user: m.user,
+      identityFile: m.identityFile ?? "",
+      extraOptions: m.extraOptions,
+    })),
   };
 }
 
@@ -75,6 +113,13 @@ export function toHostInput(v: HostFormValues, color: string | null = null): Hos
     identityFile: opt(v.identityFile),
     proxyJump: opt(v.proxyJump),
     extraOptions: v.extraOptions.filter((o) => o.key.trim() !== ""),
+    userMatches: v.userMatches
+      .filter((m) => m.user.trim() !== "" || m.identityFile.trim() !== "")
+      .map((m) => ({
+        user: m.user.trim(),
+        identityFile: opt(m.identityFile),
+        extraOptions: m.extraOptions,
+      })),
     groupId: v.groupId,
     description: v.description,
     notes: v.notes,

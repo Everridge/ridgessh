@@ -51,10 +51,18 @@ fn read_key(path: &Path) -> Result<Vec<u8>, String> {
 pub fn collect(hosts: &[Host], home: &Path, warnings: &mut Vec<String>) -> Vec<ExportKey> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
-    for h in hosts {
-        let Some(value) = h.identity_file.as_deref() else {
-            continue;
-        };
+    // The host's own key, then those of its per-user blocks.
+    let named = hosts.iter().flat_map(|h| {
+        h.identity_file
+            .iter()
+            .chain(
+                h.user_matches
+                    .iter()
+                    .filter_map(|m| m.identity_file.as_ref()),
+            )
+            .map(move |v| (h, v.as_str()))
+    });
+    for (h, value) in named {
         if !seen.insert(value.to_string()) {
             continue;
         }

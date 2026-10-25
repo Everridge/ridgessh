@@ -7,10 +7,219 @@ fn file(text: &str) -> ConfigFile {
     ConfigFile::parse("config", text)
 }
 
+/// The host as a scan reads it, with its per-user blocks.
 fn conn_of(text: &str, alias: &str) -> Connection {
-    let f = file(text);
-    let block = find_host_block(&f, alias).unwrap();
-    extract_host(&f, block, alias, &mut Vec::new()).connection()
+    crate::ssh_config::parse_single(std::path::Path::new("config"), text)
+        .hosts
+        .into_iter()
+        .find(|h| h.alias == alias)
+        .unwrap()
+        .connection()
+}
+
+fn user(name: &str, key: &str) -> UserMatch {
+    UserMatch {
+        user: name.into(),
+        identity_file: Some(key.into()),
+        extra_options: vec![],
+    }
+}
+
+const USERS: &str = "\
+Host web
+    HostName 10.0.0.1
+    IdentitiesOnly yes
+
+Match originalhost web user deploy
+    IdentityFile ~/.ssh/web_deploy
+
+Match user root originalhost web
+    IdentityFile ~/.ssh/web_root
+    ForwardAgent yes
+
+Host db
+    HostName 10.0.0.2
+
+# defaults
+Host *
+    ServerAliveInterval 30
+";
+
+#[test]
+fn per_user_blocks_are_read_with_their_host() {
+    let c = conn_of(USERS, "web");
+    assert_eq!(
+        c.user_matches,
+        [
+            user("deploy", "~/.ssh/web_deploy"),
+            UserMatch {
+                extra_options: vec![Directive {
+                    key: "ForwardAgent".into(),
+                    value: "yes".into()
+                }],
+                ..user("root", "~/.ssh/web_root")
+            }
+        ]
+    );
+    assert!(conn_of(USERS, "db").user_matches.is_empty());
+    // Unchanged hosts are written back byte for byte.
+    assert_eq!(update(USERS, "web", |_| {}), USERS);
+}
+
+#[test]
+fn edits_removes_and_adds_per_user_blocks() {
+    let out = update(USERS, "web", |c| {
+        c.user_matches[0].identity_file = Some("~/.ssh/web_deploy2".into());
+        c.user_matches.remove(1);
+        c.user_matches.push(user("tom", "~/.ssh/web tom"));
+    });
+    assert_eq!(
+        out,
+        "\
+Host web
+    HostName 10.0.0.1
+    IdentitiesOnly yes
+
+Match originalhost web user deploy
+    IdentityFile ~/.ssh/web_deploy2
+
+Match originalhost web user tom
+    IdentityFile \"~/.ssh/web tom\"
+
+Host db
+    HostName 10.0.0.2
+
+# defaults
+Host *
+    ServerAliveInterval 30
+"
+    );
+}
+
+#[test]
+fn a_regular_host_gets_its_first_user_block_right_after_it() {
+    let out = update(USERS, "db", |c| {
+        c.user_matches.push(user("app", "~/.ssh/db_app"))
+    });
+    assert!(
+        out.contains(
+            "Host db
+    HostName 10.0.0.2
+
+Match originalhost db user app
+    IdentityFile ~/.ssh/db_app
+
+# defaults
+Host *"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn renaming_a_host_renames_its_user_blocks() {
+    let out = update(USERS, "web", |c| c.alias = "web-1".into());
+    assert!(out.contains("Host web-1\n"), "{out}");
+    assert!(
+        out.contains("Match originalhost web-1 user deploy\n"),
+        "{out}"
+    );
+    // The criteria keep their order.
+    assert!(
+        out.contains("Match user root originalhost web-1\n"),
+        "{out}"
+    );
+    assert!(!out.contains("originalhost web "), "{out}");
+}
+
+#[test]
+fn removing_a_host_removes_its_user_blocks() {
+    let out = run(
+        USERS,
+        &[Edit::Remove {
+            alias: "web".into(),
+        }],
+    );
+    assert_eq!(
+        out,
+        "\
+Host db
+    HostName 10.0.0.2
+
+# defaults
+Host *
+    ServerAliveInterval 30
+"
+    );
+}
+
+#[test]
+fn new_hosts_come_with_their_users_after_the_last_hosts_users() {
+    let text = "\
+Host web
+    HostName 10.0.0.1
+
+Match originalhost web user deploy
+    IdentityFile ~/.ssh/web_deploy
+
+Host *
+    ServerAliveInterval 30
+";
+    let mut conn = new_conn("api");
+    conn.user_matches = vec![user("ops", "~/.ssh/api_ops")];
+    let out = run(text, &[Edit::Add { conn }]);
+    assert_eq!(
+        out,
+        "\
+Host web
+    HostName 10.0.0.1
+
+Match originalhost web user deploy
+    IdentityFile ~/.ssh/web_deploy
+
+Host api
+    HostName 10.0.0.9
+    User deploy
+
+Match originalhost api user ops
+    IdentityFile ~/.ssh/api_ops
+
+Host *
+    ServerAliveInterval 30
+"
+    );
+}
+
+#[test]
+fn user_blocks_are_validated() {
+    let f = file(USERS);
+    for bad in [
+        user("-oProxyCommand=x", "k"),
+        user("a b", "k"),
+        user("deploy", "k\nHost evil"),
+        UserMatch {
+            extra_options: vec![Directive {
+                key: "Match".into(),
+                value: "all".into(),
+            }],
+            ..user("x", "k")
+        },
+    ] {
+        let mut conn = conn_of(USERS, "db");
+        conn.user_matches = vec![bad.clone()];
+        let edits = [Edit::Update {
+            alias: "db".into(),
+            conn,
+        }];
+        assert!(apply(&f, &edits, &HashSet::new()).is_err(), "{bad:?}");
+    }
+    let mut conn = conn_of(USERS, "db");
+    conn.user_matches = vec![user("x", "a"), user("x", "b")];
+    let edits = [Edit::Update {
+        alias: "db".into(),
+        conn,
+    }];
+    assert!(apply(&f, &edits, &HashSet::new()).is_err(), "a user twice");
 }
 
 /// Applies the edits, runs the verifier and returns the new text.
@@ -434,11 +643,34 @@ fn real_ssh_reads_written_values() {
             key: "LocalForward".into(),
             value: "15433 localhost:5432".into(),
         }],
+        user_matches: vec![user("alice", "~/.ssh/alice key")],
     };
     let text = run("Host *\n  ServerAliveInterval 30\n", &[Edit::Add { conn }]);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config");
     std::fs::write(&path, &text).unwrap();
+
+    // Connecting as alice applies her block; other users do not get her key.
+    let resolve = |dest: &str| {
+        let out = std::process::Command::new(&ssh)
+            .arg("-G")
+            .arg("-F")
+            .arg(&path)
+            .arg(dest)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).to_lowercase()
+    };
+    let alice = resolve("alice@ridgessh-selftest");
+    assert!(alice.lines().any(|l| l == "user alice"), "{alice}");
+    assert!(
+        alice
+            .lines()
+            .any(|l| l.starts_with("identityfile") && l.contains("alice key")),
+        "{alice}"
+    );
+    assert!(!resolve("bob@ridgessh-selftest").contains("alice key"));
+
     let out = std::process::Command::new(ssh)
         .arg("-G")
         .arg("-F")

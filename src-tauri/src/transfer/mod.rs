@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::backup;
 use crate::config_write::{self, atomic};
 use crate::db::groups::{self, GroupInput};
-use crate::db::hosts::{self, Directive, Host, HostField, HostInput};
+use crate::db::hosts::{self, Directive, Host, HostField, HostInput, UserMatch};
 use crate::db::tags::Tag;
 use crate::error::{AppError, AppResult};
 use crate::history::Source;
@@ -61,6 +61,8 @@ pub struct ExportHost {
     pub identity_file: Option<String>,
     pub proxy_jump: Option<String>,
     pub extra_options: Vec<Directive>,
+    /// Per-user `Match` blocks.
+    pub user_matches: Vec<UserMatch>,
     pub group_id: Option<String>,
     pub description: String,
     pub notes: String,
@@ -141,6 +143,7 @@ fn export_host(h: &Host) -> ExportHost {
         identity_file: h.identity_file.clone(),
         proxy_jump: h.proxy_jump.clone(),
         extra_options: h.extra_options.clone(),
+        user_matches: h.user_matches.clone(),
         group_id: h.group_id.clone(),
         description: h.description.clone(),
         notes: h.notes.clone(),
@@ -399,6 +402,7 @@ pub fn from_config(path: &Path, text: &str) -> Loaded {
             identity_file: h.identity_file,
             proxy_jump: h.proxy_jump,
             extra_options: h.extra_options,
+            user_matches: h.user_matches,
             ..Default::default()
         })
         .collect();
@@ -550,6 +554,7 @@ fn host_differences(h: &Host, x: &ExportHost) -> Vec<String> {
     check("identity file", h.identity_file != opt(&x.identity_file));
     check("proxy jump", h.proxy_jump != opt(&x.proxy_jump));
     check("options", h.extra_options != x.extra_options);
+    check("users", h.user_matches != x.user_matches);
     check("description", h.description != x.description.trim());
     check("notes", h.notes != x.notes);
     check("color", h.color != opt(&x.color));
@@ -562,13 +567,14 @@ fn host_differences(h: &Host, x: &ExportHost) -> Vec<String> {
     d
 }
 
-const CONNECTION_LABELS: [&str; 6] = [
+const CONNECTION_LABELS: [&str; 7] = [
     "hostname",
     "user",
     "port",
     "identity file",
     "proxy jump",
     "options",
+    "users",
 ];
 
 fn script_differences(s: &Script, x: &ExportScript) -> Vec<String> {
@@ -764,6 +770,7 @@ fn host_input(x: &ExportHost, alias: &str, group_id: Option<String>) -> HostInpu
         identity_file: x.identity_file.clone(),
         proxy_jump: x.proxy_jump.clone(),
         extra_options: x.extra_options.clone(),
+        user_matches: x.user_matches.clone(),
         group_id,
         description: x.description.clone(),
         notes: x.notes.clone(),

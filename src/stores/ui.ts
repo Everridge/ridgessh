@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { FolderRecipe } from "@/lib/ipc";
 
+export type HostFormTab = "connection" | "users" | "info" | "advanced";
+
 export type HostView = "all" | "favorites" | "recent" | "removed" | "trash" | "group";
 
 /** Folder transfers: server → this PC, this PC → server, server → server. */
@@ -38,6 +40,8 @@ interface UiState {
   checkedIds: string[];
   /** Host form dialog: `null` closed, `"new"` create, otherwise the host id being edited. */
   hostForm: "new" | string | null;
+  /** The host form's tab to open on. */
+  hostFormTab: HostFormTab;
   /** Config sync review dialog. */
   syncReviewOpen: boolean;
   quickConnectOpen: boolean;
@@ -51,7 +55,7 @@ interface UiState {
   selectHost: (id: string | null) => void;
   setChecked: (ids: string[]) => void;
   toggleChecked: (id: string) => void;
-  openHostForm: (target: "new" | string) => void;
+  openHostForm: (target: "new" | string, tab?: HostFormTab) => void;
   closeHostForm: () => void;
   setSyncReviewOpen: (open: boolean) => void;
   setQuickConnectOpen: (open: boolean) => void;
@@ -94,6 +98,7 @@ export const useUiStore = create<UiState>((set) => ({
   selectedHostId: null,
   checkedIds: [],
   hostForm: null,
+  hostFormTab: "connection",
   syncReviewOpen: false,
   quickConnectOpen: false,
   configWrite: null,
@@ -120,7 +125,7 @@ export const useUiStore = create<UiState>((set) => ({
         ? s.checkedIds.filter((x) => x !== id)
         : [...s.checkedIds, id],
     })),
-  openHostForm: (hostForm) => set({ hostForm }),
+  openHostForm: (hostForm, hostFormTab = "connection") => set({ hostForm, hostFormTab }),
   closeHostForm: () => set({ hostForm: null }),
   setSyncReviewOpen: (syncReviewOpen) => set({ syncReviewOpen }),
   setQuickConnectOpen: (quickConnectOpen) => set({ quickConnectOpen }),

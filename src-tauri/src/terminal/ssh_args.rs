@@ -81,6 +81,17 @@ pub fn host_options(host: &Host, user: Option<&str>) -> AppResult<(Vec<String>, 
             args.push(format!("{key}={value}"));
         };
         // Single-value fields hold a plain value and get quoted for OpenSSH's tokenizer.
+        // A user's own block (`Match originalhost alias user name`) comes first, as its key is
+        // the one meant for that login.
+        let mine = user.and_then(|u| host.user_matches.iter().find(|m| m.user == u));
+        if let Some(m) = mine {
+            if let Some(v) = &m.identity_file {
+                opt("IdentityFile", quote_arg(v));
+            }
+            for d in &m.extra_options {
+                opt(&d.key, d.value.clone());
+            }
+        }
         let single = [
             ("HostName", host.hostname.clone()),
             // `-o User` would win over `user@`, so it is left out when connecting as a user.
@@ -129,6 +140,7 @@ mod tests {
                 key: "LocalForward".into(),
                 value: "8080 localhost:80".into(),
             }],
+            user_matches: vec![],
             group_id: None,
             description: String::new(),
             notes: String::new(),

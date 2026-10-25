@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   useFieldArray,
   useForm,
@@ -7,7 +8,7 @@ import {
   type UseFormRegister,
 } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { InfoIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
+import { InfoIcon, KeyRoundIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -47,6 +48,7 @@ export function HostFormDialog() {
 
 function HostForm({ host, onClose }: { host?: Host; onClose: () => void }) {
   const ui = useUiStore.getState();
+  const [tab, setTab] = useState<string>(ui.hostFormTab);
   const selectHost = useUiStore((s) => s.selectHost);
   const create = useCreateHost();
   const update = useUpdateHost();
@@ -55,7 +57,10 @@ function HostForm({ host, onClose }: { host?: Host; onClose: () => void }) {
     defaultValues: toFormValues(host, { groupId: ui.view === "group" ? ui.groupId : null }),
   });
   const { register, handleSubmit, control, setValue, formState } = form;
-  const [groupId, tags, favorite] = useWatch({ control, name: ["groupId", "tags", "favorite"] });
+  const [groupId, tags, favorite, alias] = useWatch({
+    control,
+    name: ["groupId", "tags", "favorite", "alias"],
+  });
   const errors = formState.errors;
   const pending = create.isPending || update.isPending;
 
@@ -90,10 +95,13 @@ function HostForm({ host, onClose }: { host?: Host; onClose: () => void }) {
         </DialogDescription>
       </DialogHeader>
 
-      <Tabs defaultValue="connection">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="connection" className={connectionErrors ? "text-destructive" : ""}>
             Connection
+          </TabsTrigger>
+          <TabsTrigger value="users" className={errors.userMatches ? "text-destructive" : ""}>
+            Users
           </TabsTrigger>
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="advanced" className={errors.extraOptions ? "text-destructive" : ""}>
@@ -138,6 +146,15 @@ function HostForm({ host, onClose }: { host?: Host; onClose: () => void }) {
           <Field label="ProxyJump" error={errors.proxyJump?.message} className="sm:col-span-6">
             <Input id="proxyJump" placeholder="bastion" {...register("proxyJump")} />
           </Field>
+        </TabsContent>
+
+        <TabsContent value="users" className="grid gap-3 pt-2">
+          <UserList
+            alias={alias.trim() || "alias"}
+            control={control}
+            register={register}
+            errors={errors}
+          />
         </TabsContent>
 
         <TabsContent value="info" className="grid gap-3 pt-2">
@@ -221,6 +238,99 @@ function Field({
       <Label htmlFor={children.props.id}>{label}</Label>
       {children}
       {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/** Per-user settings: `Match originalhost <alias> user <name>` blocks with their own key. */
+function UserList({
+  alias,
+  control,
+  register,
+  errors,
+}: {
+  alias: string;
+  control: Control<HostFormValues>;
+  register: UseFormRegister<HostFormValues>;
+  errors: FieldErrors<HostFormValues>;
+}) {
+  const { fields, append, remove } = useFieldArray({ control, name: "userMatches" });
+  const rowErrors = errors.userMatches;
+
+  return (
+    <div className="grid gap-2">
+      <p className="text-sm text-muted-foreground">
+        Log in as other users of this server, each with its own key. Each user becomes a{" "}
+        <code>Match originalhost {alias} user …</code> block after the host in ~/.ssh/config, and
+        RidgeSSH connects to it as <code>user@{alias}</code>.
+      </p>
+      <div className="flex items-center justify-between">
+        <Label>Users</Label>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => append({ user: "", identityFile: "", extraOptions: [] })}
+        >
+          <PlusIcon /> Add user
+        </Button>
+      </div>
+      {fields.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          None. The host connects only as its own user.
+        </p>
+      )}
+      <ul className="grid gap-2" aria-label="Users">
+        {fields.map((f, i) => {
+          const err = rowErrors?.[i];
+          const kept = f.extraOptions.length;
+          return (
+            <li key={f.id} className="grid gap-1">
+              <div className="flex gap-2">
+                <Input
+                  className="w-2/5"
+                  placeholder="User"
+                  aria-label={`User ${i + 1}`}
+                  aria-invalid={!!err?.user}
+                  {...register(`userMatches.${i}.user`)}
+                />
+                <div className="relative flex-1">
+                  <KeyRoundIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-8"
+                    placeholder="~/.ssh/id_ed25519"
+                    aria-label={`Identity file of user ${i + 1}`}
+                    aria-invalid={!!err?.identityFile}
+                    {...register(`userMatches.${i}.identityFile`)}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove user ${i + 1}`}
+                  onClick={() => remove(i)}
+                >
+                  <XIcon />
+                </Button>
+              </div>
+              {kept > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Also keeps {kept} other option{kept === 1 ? "" : "s"} from the config:{" "}
+                  <span className="font-mono">
+                    {f.extraOptions.map((o) => `${o.key} ${o.value}`).join(" · ")}
+                  </span>
+                </p>
+              )}
+              {(err?.user?.message ?? err?.identityFile?.message) && (
+                <p className="text-xs text-destructive">
+                  {err?.user?.message ?? err?.identityFile?.message}
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

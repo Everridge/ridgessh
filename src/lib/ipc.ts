@@ -48,7 +48,15 @@ export interface TagWithCount extends Tag {
   hostCount: number;
 }
 
-/** Connection part of a host, as it maps to a `Host` block in ssh_config. */
+/** One user's own settings for a host: a `Match originalhost <alias> user <name>` block. */
+export interface UserMatch {
+  user: string;
+  identityFile: string | null;
+  /** The block's other lines. */
+  extraOptions: Directive[];
+}
+
+/** Connection part of a host, as it maps to a `Host` block (and its per-user `Match` blocks). */
 export interface Connection {
   alias: string;
   hostname: string | null;
@@ -57,6 +65,7 @@ export interface Connection {
   identityFile: string | null;
   proxyJump: string | null;
   extraOptions: Directive[];
+  userMatches: UserMatch[];
 }
 
 export interface Host {
@@ -68,6 +77,7 @@ export interface Host {
   identityFile: string | null;
   proxyJump: string | null;
   extraOptions: Directive[];
+  userMatches: UserMatch[];
   groupId: string | null;
   description: string;
   notes: string;
@@ -97,6 +107,7 @@ export interface HostInput {
   identityFile: string | null;
   proxyJump: string | null;
   extraOptions: Directive[];
+  userMatches: UserMatch[];
   groupId: string | null;
   description: string;
   notes: string;
@@ -132,14 +143,13 @@ export interface RuleBlock {
   directiveCount: number;
 }
 
-/** A `Match originalhost <alias> user <name>` block: one user of a host, with its own key. */
+/** One user of a host (from its `userMatches`), connected to as `user@alias`. */
 export interface UserVariant {
+  /** The alias in the config, which the `Match originalhost` block names. */
   alias: string;
   user: string;
   identityFile: string | null;
   options: Directive[];
-  source: string;
-  line: number;
 }
 
 export interface SyncReport {
@@ -635,7 +645,6 @@ export const api = {
   terminalClose: (sessionId: string) => invoke<void>("terminal_close", { sessionId }),
   terminalOpenExternal: (hostId: string, user: string | null = null) =>
     invoke<void>("terminal_open_external", { hostId, user }),
-  configVariants: () => invoke<UserVariant[]>("config_variants"),
   transferOpen: (
     spec: TransferSpec,
     cols: number,

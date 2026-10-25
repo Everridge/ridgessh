@@ -15,6 +15,7 @@ const snapshot = (over: Partial<Connection> = {}): Connection => ({
   identityFile: null,
   proxyJump: null,
   extraOptions: [],
+  userMatches: [],
   ...over,
 });
 

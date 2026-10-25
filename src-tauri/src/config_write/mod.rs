@@ -171,8 +171,35 @@ fn blocked_reason(h: &Host, op: Op, current: &Current) -> Option<String> {
             "Its block was changed in the config file since the last scan. Re-scan the config."
                 .into(),
         ),
+        Some(_) if !user_blocks_as_scanned(h, current) => Some(
+            "Its per-user Match blocks changed since the last scan, or some are in an included \
+             file (RidgeSSH only writes the main config). Re-scan the config."
+                .into(),
+        ),
         Some(_) => None,
     }
+}
+
+/// The main file's per-user blocks for the host are still what the last scan saw.
+fn user_blocks_as_scanned(h: &Host, current: &Current) -> bool {
+    let alias = config_alias(h);
+    let mut parsed = ssh_config::ParsedConfig::default();
+    for b in &current.file.blocks {
+        if matches!(b.kind, ssh_config::BlockKind::Match { .. }) {
+            ssh_config::collect_block(&current.file, b, &mut parsed);
+        }
+    }
+    let now: Vec<_> = parsed
+        .variants
+        .iter()
+        .filter(|v| v.alias == alias)
+        .map(ssh_config::UserVariant::user_match)
+        .collect();
+    let scanned = h
+        .config_snapshot
+        .as_ref()
+        .map_or(&[][..], |s| &s.user_matches[..]);
+    now == scanned
 }
 
 /// Everything that could be written, for the dialog's checklist.
