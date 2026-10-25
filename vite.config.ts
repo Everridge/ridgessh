@@ -32,5 +32,7 @@ export default defineConfig(() => ({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // Whole-app UI tests click through several dialogs; slow CI runners need headroom.
+    testTimeout: 20_000,
   },
 }));

@@ -23,6 +23,7 @@ export const keys = {
   backupStatus: ["backup-status"] as const,
   backups: ["backups"] as const,
   variants: ["config-variants"] as const,
+  recipes: ["folder-recipes"] as const,
 };
 
 /** Refreshes everything derived from hosts after any change. */
@@ -35,6 +36,7 @@ export function invalidateAll(qc: QueryClient) {
     keys.configCandidates,
     keys.configPreview,
     keys.variants,
+    keys.recipes,
     // Edits can trigger automatic backups.
     keys.backupStatus,
     keys.backups,

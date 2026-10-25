@@ -29,6 +29,11 @@ fn spec(source: Endpoint, destination: Endpoint) -> FolderSpec {
         keep_copy: None,
         existing: Existing::Backup,
         owner: None,
+        excludes: vec![],
+        sudo_source: false,
+        sudo_dest: false,
+        before: None,
+        after: None,
     }
 }
 
@@ -151,7 +156,7 @@ fn local_pack_layout() {
     let root = tempfile::tempdir().unwrap();
     let dir = tree(root.path());
     let out = root.path().join("out.zip");
-    let report = local::pack(&dir, &out).unwrap();
+    let report = local::pack(&dir, &out, &[]).unwrap();
     assert!(report.skipped.is_empty(), "{:?}", report.skipped);
     let names = zip_names(&out);
     for want in [
@@ -181,7 +186,7 @@ fn local_pack_layout() {
     assert_eq!(bytes, report.bytes);
     // Same folder, same archive.
     let again = root.path().join("again.zip");
-    local::pack(&dir, &again).unwrap();
+    local::pack(&dir, &again, &[]).unwrap();
     assert_eq!(sha256_file(&out).unwrap(), sha256_file(&again).unwrap());
 }
 
@@ -224,7 +229,7 @@ fn unpack_script_verifies_and_handles_an_existing_folder() {
     let root = tempfile::tempdir().unwrap();
     let src = tree(root.path());
     let zip = root.path().join("site.zip");
-    local::pack(&src, &zip).unwrap();
+    local::pack(&src, &zip, &[]).unwrap();
     let sha = sha256_file(&zip).unwrap();
     let dest = root.path().join("dest").join("new parent");
 
@@ -334,7 +339,7 @@ fn python_fallback_unpacker() {
     let root = tempfile::tempdir().unwrap();
     let src = tree(root.path());
     let zip = root.path().join("site.zip");
-    local::pack(&src, &zip).unwrap();
+    local::pack(&src, &zip, &[]).unwrap();
     let dest = root.path().join("out");
     std::fs::create_dir(&dest).unwrap();
     let out = Command::new("python3")
@@ -414,8 +419,8 @@ mod end_to_end {
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
             p
         };
-        // ssh <destination> <remote command>
-        let ssh = write("ssh", r#"shift; exec /bin/sh -c "$1""#);
+        // ssh [-t] <destination> <remote command>: runs the last argument.
+        let ssh = write("ssh", r#"for a; do last=$a; done; exec /bin/sh -c "$last""#);
         // scp [-q] <from> <to>, either side possibly "host:/path"
         let scp = write(
             "scp",
@@ -465,6 +470,9 @@ mod end_to_end {
         };
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
         let mut state = RunState::new(id, spec);
+        // What `folder_open` resolves: commands run as typed by the login shell.
+        state.before_cmd = state.spec.before.as_ref().and_then(|h| h.command.clone());
+        state.after_cmd = state.spec.after.as_ref().and_then(|h| h.command.clone());
         let code = runner.execute(&mut state);
         let text = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
         let mut last = vec![StepStatus::Running; state.steps.len()];
@@ -563,6 +571,69 @@ mod end_to_end {
         assert!(copy.path().join("site.zip").is_file(), "the kept copy");
         assert!(!Path::new(&remote_archive(&state.id)).exists());
         assert!(!Path::new(&remote_inbox(&state.id)).exists());
+    }
+
+    #[test]
+    fn scripts_around_a_server_to_server_copy_with_excludes() {
+        let a = tempfile::tempdir().unwrap();
+        let src = tree(a.path());
+        std::fs::create_dir_all(src.join("node_modules").join("x")).unwrap();
+        std::fs::write(src.join("node_modules").join("x").join("big.js"), b"x").unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let marks = tempfile::tempdir().unwrap();
+        let before = marks.path().join("before");
+        let after = marks.path().join("after");
+        let mut s = spec(
+            remote_end(&src.display().to_string()),
+            remote_end(&b.path().display().to_string()),
+        );
+        s.excludes = vec!["node_modules".into(), "*.css".into()];
+        s.before = Some(Hook {
+            script_id: None,
+            command: Some(format!("touch '{}'", before.display())),
+        });
+        // Runs after unpacking: the copy is already there.
+        s.after = Some(Hook {
+            script_id: None,
+            command: Some(format!(
+                "test -f '{}/site/index.html' && touch '{}'",
+                b.path().display(),
+                after.display()
+            )),
+        });
+        let (code, text, statuses, _) = execute(s);
+        assert_eq!(code, Some(0), "{text}");
+        assert!(all_done(&statuses), "{statuses:?}\n{text}");
+        assert!(before.exists() && after.exists(), "{text}");
+        let site = b.path().join("site");
+        assert!(site.join("index.html").exists());
+        assert!(!site.join("node_modules").exists(), "excluded");
+        assert!(
+            !site.join("assets").join("my file.css").exists(),
+            "excluded"
+        );
+    }
+
+    #[test]
+    fn a_failing_script_stops_the_transfer() {
+        let a = tempfile::tempdir().unwrap();
+        let src = tree(a.path());
+        let local = tempfile::tempdir().unwrap();
+        let mut s = spec(
+            remote_end(&src.display().to_string()),
+            local_end(local.path()),
+        );
+        s.before = Some(Hook {
+            script_id: None,
+            command: Some("exit 3".into()),
+        });
+        let (code, text, statuses, _) = execute(s);
+        assert_eq!(code, Some(1), "{text}");
+        assert_eq!(statuses[1], StepStatus::Failed, "{text}");
+        assert!(
+            text.contains("script before failed with exit code 3"),
+            "{text}"
+        );
     }
 
     #[test]

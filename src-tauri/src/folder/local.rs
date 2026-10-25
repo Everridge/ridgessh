@@ -19,6 +19,8 @@ pub struct PackReport {
     pub bytes: u64,
     /// Entries that could not be read and were left out.
     pub skipped: Vec<String>,
+    /// Entries left out by an exclude pattern (a folder counts once).
+    pub excluded: u64,
 }
 
 /// Total size and file count of a folder (symlinks are not followed).
@@ -73,8 +75,15 @@ fn options(meta: &fs::Metadata) -> SimpleFileOptions {
     o
 }
 
-/// Zips `dir` into `out` as `<dir name>/…`.
-pub fn pack(dir: &Path, out: &Path) -> AppResult<PackReport> {
+/// Zips `dir` into `out` as `<dir name>/…`, leaving out entries whose archive path matches
+/// one of `excludes` (see `exclude_patterns`; an excluded folder is not entered).
+pub fn pack(dir: &Path, out: &Path, excludes: &[String]) -> AppResult<PackReport> {
+    let excludes: Vec<glob::Pattern> = excludes
+        .iter()
+        .map(|p| glob::Pattern::new(p))
+        .collect::<Result<_, _>>()
+        .map_err(|e| AppError::Validation(format!("exclude pattern: {e}")))?;
+    let excluded = |entry: &str| excludes.iter().any(|p| p.matches(entry));
     let name = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -100,6 +109,10 @@ pub fn pack(dir: &Path, out: &Path) -> AppResult<PackReport> {
         let mut dirs = Vec::new();
         for c in children {
             let child = format!("{entry}/{}", c.file_name().to_string_lossy());
+            if excluded(&child) {
+                report.excluded += 1;
+                continue;
+            }
             let meta = match fs::symlink_metadata(c.path()) {
                 Ok(m) => m,
                 Err(e) => {

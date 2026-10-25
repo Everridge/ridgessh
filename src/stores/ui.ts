@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { FolderRecipe } from "@/lib/ipc";
 
 export type HostView = "all" | "favorites" | "recent" | "removed" | "trash" | "group";
 
@@ -12,8 +13,15 @@ interface UiState {
   historyOpen: boolean;
   /** Upload / download dialog for one host. */
   transfer: { hostId: string; direction: "upload" | "download"; user?: string | null } | null;
-  /** Folder transfer dialog, opened for a host in one direction (changeable in the dialog). */
-  folderTransfer: { mode: FolderMode; hostId: string; user?: string | null } | null;
+  /**
+   * Folder transfer dialog: opened for a host in one direction (changeable in the dialog), or
+   * with a saved recipe's settings.
+   */
+  folderTransfer:
+    | { mode: FolderMode; hostId: string; user?: string | null; recipe?: undefined }
+    | { recipe: FolderRecipe }
+    | null;
+  recipesOpen: boolean;
   scriptsOpen: boolean;
   /** Run-script dialog: target hosts and an optional pre-selected script. */
   scriptRun: { hostIds: string[]; scriptId?: string; user?: string | null } | null;
@@ -54,6 +62,8 @@ interface UiState {
   closeTransfer: () => void;
   openFolderTransfer: (mode: FolderMode, hostId: string, user?: string | null) => void;
   closeFolderTransfer: () => void;
+  openRecipe: (recipe: FolderRecipe) => void;
+  setRecipesOpen: (open: boolean) => void;
   setScriptsOpen: (open: boolean) => void;
   openScriptRun: (hostIds: string[], scriptId?: string, user?: string | null) => void;
   closeScriptRun: () => void;
@@ -90,6 +100,7 @@ export const useUiStore = create<UiState>((set) => ({
   historyOpen: false,
   transfer: null,
   folderTransfer: null,
+  recipesOpen: false,
   scriptsOpen: false,
   scriptRun: null,
   settingsOpen: false,
@@ -121,6 +132,8 @@ export const useUiStore = create<UiState>((set) => ({
   openFolderTransfer: (mode, hostId, user = null) =>
     set({ folderTransfer: { mode, hostId, user } }),
   closeFolderTransfer: () => set({ folderTransfer: null }),
+  openRecipe: (recipe) => set({ folderTransfer: { recipe }, recipesOpen: false }),
+  setRecipesOpen: (recipesOpen) => set({ recipesOpen }),
   setScriptsOpen: (scriptsOpen) => set({ scriptsOpen }),
   openScriptRun: (hostIds, scriptId, user = null) =>
     set({ scriptRun: { hostIds, scriptId, user } }),

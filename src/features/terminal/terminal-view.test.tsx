@@ -124,7 +124,7 @@ describe("terminal view", () => {
       step: Channel<StepEvent>;
     }[] = [];
     vi.spyOn(api, "folderOpen").mockImplementation(
-      async (_spec, resume, _c, _r, _data, exit, step) => {
+      async (_spec, resume, _recipe, _c, _r, _data, exit, step) => {
         calls.push({ resume, exit, step });
         // The backend starts at once: a step update can beat the reply.
         step.onmessage({ index: 0, status: "running", detail: null });

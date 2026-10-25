@@ -8,8 +8,11 @@ use super::terminal::live_host;
 use crate::AppState;
 use crate::db::activity;
 use crate::error::{AppError, AppResult};
+use crate::folder::browse::{self, Listing};
+use crate::folder::recipes::{self, Recipe};
 use crate::folder::runner::{self, Conn, RunState, Runner, StepEvent};
-use crate::folder::{Endpoint, FolderSpec, StepInfo, check_spec};
+use crate::folder::{Endpoint, FolderSpec, Hook, StepInfo, check_spec};
+use crate::scripts;
 use crate::settings;
 use crate::terminal::TerminalExit;
 use crate::terminal::ssh_args::{find_tool, host_options};
@@ -79,6 +82,24 @@ fn describe(end: &Endpoint, conn: Option<&Conn>) -> String {
     }
 }
 
+/// The remote command line for a script around the transfer.
+fn hook_command(state: &AppState, hook: &Hook) -> AppResult<String> {
+    match (&hook.script_id, &hook.command) {
+        (Some(id), _) => {
+            let script = state.db.tx(|tx| scripts::get(tx, id))?;
+            scripts::remote_command(
+                &script.content,
+                &script.interpreter,
+                script.run_mode,
+                &script.default_args,
+            )
+        }
+        // Run by the login shell, exactly as typed in a terminal.
+        (None, Some(command)) => Ok(command.trim().to_string()),
+        (None, None) => Err(AppError::Validation("the script is empty".into())),
+    }
+}
+
 /// Starts (or, with `resume`, continues) a folder transfer in a terminal tab.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // the IPC argument list
@@ -87,6 +108,7 @@ pub fn folder_open(
     state: State<'_, AppState>,
     spec: FolderSpec,
     resume: Option<String>,
+    recipe_id: Option<String>,
     cols: u16,
     rows: u16,
     on_data: Channel,
@@ -107,7 +129,20 @@ pub fn folder_open(
         None => {
             check_spec(&spec)?;
             let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-            RunState::new(id, spec)
+            let mut run = RunState::new(id, spec);
+            run.before_cmd = run
+                .spec
+                .before
+                .as_ref()
+                .map(|h| hook_command(&state, h))
+                .transpose()?;
+            run.after_cmd = run
+                .spec
+                .after
+                .as_ref()
+                .map(|h| hook_command(&state, h))
+                .transpose()?;
+            run
         }
     };
     let spec = run.spec.clone();
@@ -171,8 +206,18 @@ pub fn folder_open(
         on_data,
         on_step,
     };
+    if let Some(id) = &recipe_id {
+        state.db.tx(|tx| recipes::record_run(tx, id, None))?;
+    }
     let finished = move |run: RunState, code: Option<u32>| {
         let state = app.state::<AppState>();
+        if let Some(id) = &recipe_id
+            && let Err(e) = state
+                .db
+                .tx(|tx| recipes::record_run(tx, id, code.map(i64::from)))
+        {
+            tracing::warn!("could not record the recipe's run: {e}");
+        }
         for id in activities {
             if let Err(e) = state
                 .db
@@ -196,4 +241,43 @@ pub fn folder_open(
         run_id,
         steps,
     })
+}
+
+#[tauri::command]
+pub fn recipes_list(state: State<'_, AppState>) -> AppResult<Vec<Recipe>> {
+    state.db.tx(recipes::list)
+}
+
+/// Creates a recipe (`id` = None) or updates one.
+#[tauri::command]
+pub fn recipe_save(
+    state: State<'_, AppState>,
+    id: Option<String>,
+    name: String,
+    spec: FolderSpec,
+) -> AppResult<Recipe> {
+    state
+        .db
+        .tx(|tx| recipes::save(tx, id.as_deref(), &name, &spec))
+}
+
+#[tauri::command]
+pub fn recipe_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.db.tx(|tx| recipes::delete(tx, &id))
+}
+
+/// Lists a folder on a server (key-based logins only; see `folder::browse`).
+#[tauri::command]
+pub async fn folder_browse(
+    state: State<'_, AppState>,
+    host_id: String,
+    user: Option<String>,
+    path: String,
+) -> AppResult<Listing> {
+    let host = live_host(&state, &host_id)?;
+    let (options, destination) = host_options(&host, user.as_deref())?;
+    let ssh = find_tool("ssh")?;
+    tauri::async_runtime::spawn_blocking(move || browse::run(&ssh, &options, &destination, &path))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
 }

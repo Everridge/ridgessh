@@ -11,9 +11,9 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use super::{
     EXIT_CHECKSUM, EXIT_EXISTS, EXIT_NO_ACCESS, EXIT_NO_PACKER, EXIT_NO_SPACE, EXIT_NOT_FOUND,
     EXIT_SKIPPED_FILES, EXIT_UNSAFE, Endpoint, Existing, FolderSpec, Manifest, StepKind,
-    backup_name, check_command, check_dest_command, cleanup_command, find_tar, free_name,
-    free_space, local, owner_command, pack_command, parse_manifest, remote_archive, remote_inbox,
-    sha256_file, source_name, unpack_remote_command,
+    backup_name, check_command, check_dest_command, cleanup_command, exclude_patterns, find_tar,
+    free_name, free_space, local, owner_command, pack_command, parse_manifest, remote_archive,
+    remote_inbox, sha256_file, source_name, unpack_remote_command, with_sudo,
 };
 use crate::error::{AppError, AppResult};
 use crate::terminal::{SpawnRequest, TerminalExit, TerminalManager};
@@ -50,6 +50,10 @@ pub struct RunState {
     pub local_zip: Option<PathBuf>,
     /// `local_zip` is a temporary file, deleted by the clean-up step.
     pub local_zip_temp: bool,
+    /// The scripts' remote command lines, resolved when the run starts (library scripts are
+    /// read from the database then).
+    pub before_cmd: Option<String>,
+    pub after_cmd: Option<String>,
     pub finished: bool,
 }
 
@@ -63,6 +67,8 @@ impl RunState {
             manifest: None,
             local_zip: None,
             local_zip_temp: false,
+            before_cmd: None,
+            after_cmd: None,
             finished: false,
         }
     }
@@ -181,9 +187,28 @@ impl Runner {
     }
 
     fn ssh(&self, conn: &Conn, remote_command: String) -> AppResult<Option<u32>> {
+        self.ssh_with(conn, remote_command, false, false)
+    }
+
+    /// `sudo`: run as root; `tty`: give the remote side a terminal so it can prompt (sudo
+    /// always needs one).
+    fn ssh_with(
+        &self,
+        conn: &Conn,
+        remote_command: String,
+        sudo: bool,
+        tty: bool,
+    ) -> AppResult<Option<u32>> {
         let mut args = conn.options.clone();
+        if sudo || tty {
+            args.push("-t".into());
+        }
         args.push(conn.destination.clone());
-        args.push(remote_command);
+        args.push(if sudo {
+            with_sudo(&remote_command)
+        } else {
+            remote_command
+        });
         self.run(&self.ssh, args)
     }
 
@@ -277,7 +302,11 @@ impl Runner {
             StepKind::Check => match &spec.source {
                 Endpoint::Remote { path, .. } => {
                     let src = self.conn(&self.source, "source")?;
-                    plain(self.ssh(src, check_command(path)?)?, "the check")
+                    let cmd = check_command(path)?;
+                    plain(
+                        self.ssh_with(src, cmd, spec.sudo_source, false)?,
+                        "the check",
+                    )
                 }
                 Endpoint::Local { path } => self.check_local(Path::new(path.trim())),
             },
@@ -295,12 +324,16 @@ impl Runner {
                     spec.existing,
                     need_kb,
                 )?;
-                plain(self.ssh(dest, cmd)?, "the destination check")
+                plain(
+                    self.ssh_with(dest, cmd, spec.sudo_dest, false)?,
+                    "the destination check",
+                )
             }
             StepKind::Pack => {
                 let src = self.conn(&self.source, "source")?;
-                let cmd = pack_command(spec.source.path(), &remote_archive(&state.id))?;
-                match self.ssh(src, cmd)? {
+                let excludes = exclude_patterns(source_name(&spec).as_deref(), &spec.excludes);
+                let cmd = pack_command(spec.source.path(), &remote_archive(&state.id), &excludes)?;
+                match self.ssh_with(src, cmd, spec.sudo_source, false)? {
                     Some(EXIT_SKIPPED_FILES) => Ok(Some(Outcome::Warning(
                         "Some files could not be read on the server and are not in the archive."
                             .into(),
@@ -336,7 +369,7 @@ impl Runner {
                     spec.existing,
                     m.sha256.as_deref(),
                 )?;
-                plain(self.ssh(dest, cmd)?, "unzip")
+                plain(self.ssh_with(dest, cmd, spec.sudo_dest, false)?, "unzip")
             }
             StepKind::SetOwner => {
                 let dest = self.conn(&self.dest, "destination")?;
@@ -344,7 +377,23 @@ impl Runner {
                     return Ok(Some(Outcome::Ok));
                 };
                 let cmd = owner_command(spec.destination.path(), &m.name, owner)?;
-                plain(self.ssh(dest, cmd)?, "chown")
+                plain(self.ssh_with(dest, cmd, spec.sudo_dest, false)?, "chown")
+            }
+            StepKind::Before => {
+                let src = self.conn(&self.source, "source")?;
+                let cmd = state
+                    .before_cmd
+                    .clone()
+                    .ok_or_else(|| AppError::Other("the script before is missing".into()))?;
+                plain(self.ssh_with(src, cmd, false, true)?, "the script before")
+            }
+            StepKind::After => {
+                let dest = self.conn(&self.dest, "destination")?;
+                let cmd = state
+                    .after_cmd
+                    .clone()
+                    .ok_or_else(|| AppError::Other("the script after is missing".into()))?;
+                plain(self.ssh_with(dest, cmd, false, true)?, "the script after")
             }
             StepKind::Cleanup => self.cleanup(state),
         }
@@ -378,7 +427,9 @@ impl Runner {
         let dir = PathBuf::from(state.spec.source.path());
         let out = std::env::temp_dir().join(format!("ridgessh-{}.zip", state.id));
         self.say(&format!("{DIM}Zipping {}…{RESET}", dir.display()));
-        let report = match local::pack(&dir, &out) {
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned());
+        let excludes = exclude_patterns(name.as_deref(), &state.spec.excludes);
+        let report = match local::pack(&dir, &out, &excludes) {
             Ok(r) => r,
             Err(e) => {
                 let _ = std::fs::remove_file(&out);
@@ -393,6 +444,9 @@ impl Runner {
             report.bytes / 1_048_576,
             bytes / 1_048_576
         ));
+        if report.excluded > 0 {
+            self.say(&format!("Left out {} excluded entries", report.excluded));
+        }
         for s in report.skipped.iter().take(20) {
             self.say(&format!("{YELLOW}skipped {s}{RESET}"));
         }

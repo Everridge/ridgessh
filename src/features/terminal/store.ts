@@ -9,7 +9,8 @@ export type TabJob =
   | { kind: "ssh"; user?: string | null }
   | { kind: "transfer"; spec: TransferSpec }
   | { kind: "script"; run: ScriptRun }
-  | { kind: "folder"; spec: FolderSpec };
+  /** `recipeId`: started from a saved recipe (its last run is recorded). */
+  | { kind: "folder"; spec: FolderSpec; recipeId?: string | null };
 
 export interface FolderStep {
   label: string;

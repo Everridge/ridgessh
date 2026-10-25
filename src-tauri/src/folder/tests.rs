@@ -182,7 +182,12 @@ fn pack_script_zips_relative_to_the_parent_and_writes_a_summary() {
     let archive_arg = archive.display().to_string().replace('\\', "/");
     let out = run_remote(
         &sh,
-        &pack_command(&dir.display().to_string().replace('\\', "/"), &archive_arg).unwrap(),
+        &pack_command(
+            &dir.display().to_string().replace('\\', "/"),
+            &archive_arg,
+            &[],
+        )
+        .unwrap(),
         home.path(),
         home.path(),
     );

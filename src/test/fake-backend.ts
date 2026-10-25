@@ -26,6 +26,8 @@ import type {
   SettingsView,
   SyncReport,
   UserVariant,
+  FolderRecipe,
+  FolderSpec,
 } from "@/lib/ipc";
 
 /**
@@ -55,6 +57,9 @@ export interface FakeSeed {
   importPassword?: string;
   /** Per-user Match blocks of the config. */
   variants?: UserVariant[];
+  recipes?: FolderRecipe[];
+  /** What `folder_browse` lists: absolute path → entries. */
+  remoteTree?: Record<string, { name: string; dir: boolean }[]>;
 }
 
 export function installFakeBackend(seed: FakeSeed = {}) {
@@ -66,6 +71,7 @@ export function installFakeBackend(seed: FakeSeed = {}) {
   const audit: AuditEntry[] = [];
   const calls: { cmd: string; args: Record<string, unknown> }[] = [];
   let renames = [...(seed.renames ?? [])];
+  let recipes: FolderRecipe[] = [...(seed.recipes ?? [])];
   let lastSync: SyncReport | null = null;
   let scripts: Script[] = [...(seed.scripts ?? [])];
   let settings: Settings = {
@@ -321,6 +327,35 @@ export function installFakeBackend(seed: FakeSeed = {}) {
         return [];
       case "terminal_open_external":
         return null;
+      case "recipes_list":
+        return recipes;
+      case "recipe_save": {
+        const name = String(args.name).trim();
+        const existing = recipes.find((r) => r.id === args.id);
+        if (recipes.some((r) => r.name.toLowerCase() === name.toLowerCase() && r !== existing))
+          throw { kind: "conflict", message: `a recipe called "${name}" already exists` };
+        const r: FolderRecipe = existing ?? {
+          id: id(),
+          name,
+          spec: args.spec as FolderSpec,
+          createdAt: now(),
+          updatedAt: now(),
+          lastRunAt: null,
+          lastExitCode: null,
+        };
+        Object.assign(r, { name, spec: args.spec, updatedAt: now() });
+        if (!existing) recipes.push(r);
+        return r;
+      }
+      case "recipe_delete":
+        recipes = recipes.filter((r) => r.id !== args.id);
+        return null;
+      case "folder_browse": {
+        const path = String(args.path) || "/home/me";
+        const tree = seed.remoteTree ?? {};
+        if (!(path in tree)) throw { kind: "not_found", message: `Cannot open ${path}` };
+        return { path, entries: tree[path], truncated: false };
+      }
       case "folder_last":
         return { remote: seed.lastRemote ?? null, dest: null, local: null };
       case "config_variants":
@@ -514,7 +549,14 @@ export function installFakeBackend(seed: FakeSeed = {}) {
     }
   });
 
-  return { hosts, groups, calls };
+  return {
+    hosts,
+    groups,
+    calls,
+    get recipes() {
+      return recipes;
+    },
+  };
 }
 
 export function makeHost(over: Partial<Host> = {}): Host {

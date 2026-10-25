@@ -204,6 +204,15 @@ Phases:
 - Clean up removes the archives on every side. A failed removal is a warning.
 - Each server involved gets its own activity log entry.
 
+**As built (M11 phase 3)**:
+
+- Every remote script gets the login user's `$HOME` as an argument (expanded by the login shell before `sudo`), so `~` resolves to the login user's home even when the script runs as root.
+- `sudo` is off by default and set separately for the source (check and zip) and the destination (check, unpack and set owner). The ssh session gets `-t`, so sudo can ask for a password in the tab. An archive zipped as root is handed back to the login user, who downloads and deletes it.
+- Excludes are typed one per line. A plain name such as `node_modules` or `*.log` matches at any depth. A path with a slash, such as `storage/cache`, is relative to the folder. The patterns are turned into archive-path globs that `zip -x`, the Python packer and the local Rust packer all read the same way. An excluded folder is not entered.
+- Scripts before (on the source, before zipping) and after (on the destination, after unpacking) can be a library script or a command line, run with a terminal so they can prompt. A failing script stops the transfer, and Retry continues from it.
+- Recipes are stored in the `folder_recipes` table (migration 004): a name, unique ignoring case, and the spec as JSON. The last run's time and result are recorded. "Folder recipes" in the sidebar runs one as saved, opens one in the transfer dialog to change it for this run (or to update it), or deletes one. A recipe whose server was deleted cannot run.
+- The remote folder browser uses `ssh -o BatchMode=yes` without a console window and lists one folder (`pwd`, then `ls -1Ap`, up to 2000 entries). It only works with key-based logins; for other hosts the path is typed.
+
 ## 9. Backups
 
 **Bundle** (`.rsbak`): zip containing

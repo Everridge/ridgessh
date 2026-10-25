@@ -9,7 +9,9 @@
 //! travels in a small `.sum` file (downloads) or as an argument to the unpack script
 //! (uploads), so nothing depends on parsing terminal output.
 
+pub mod browse;
 pub mod local;
+pub mod recipes;
 pub mod runner;
 
 use std::path::{Path, PathBuf};
@@ -97,6 +99,43 @@ pub struct FolderSpec {
     /// Server as destination: `chown -R` the unpacked folder (`user` or `user:group`).
     #[serde(default)]
     pub owner: Option<String>,
+    /// Names or relative paths to leave out (`node_modules`, `*.log`, `storage/cache`).
+    #[serde(default)]
+    pub excludes: Vec<String>,
+    /// Check and zip the source folder as root (folders only root can read).
+    #[serde(default)]
+    pub sudo_source: bool,
+    /// Check, unpack and set the owner at the destination as root.
+    #[serde(default)]
+    pub sudo_dest: bool,
+    /// Runs on the source server before zipping (e.g. dump a database, stop a service).
+    #[serde(default)]
+    pub before: Option<Hook>,
+    /// Runs on the destination server after unpacking (e.g. restart a service).
+    #[serde(default)]
+    pub after: Option<Hook>,
+}
+
+/// A script around a transfer: one from the library, or a command line.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hook {
+    #[serde(default)]
+    pub script_id: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+}
+
+impl Hook {
+    fn check(&self, which: &str) -> AppResult<()> {
+        match (&self.script_id, self.command.as_deref().map(str::trim)) {
+            (Some(_), None) => Ok(()),
+            (None, Some(c)) if !c.is_empty() && c.len() <= 4000 && !c.contains('\0') => Ok(()),
+            _ => Err(AppError::Validation(format!(
+                "choose a script or enter a command for \"{which}\""
+            ))),
+        }
+    }
 }
 
 fn yes() -> bool {
@@ -117,6 +156,10 @@ pub enum StepKind {
     Upload,
     UnpackRemote,
     SetOwner,
+    /// The source server's script, before zipping.
+    Before,
+    /// The destination server's script, after unpacking.
+    After,
     Cleanup,
 }
 
@@ -132,6 +175,8 @@ impl StepKind {
             StepKind::Upload => "Upload",
             StepKind::UnpackRemote => "Unpack on server",
             StepKind::SetOwner => "Set owner",
+            StepKind::Before => "Script before",
+            StepKind::After => "Script after",
             StepKind::Cleanup => "Clean up",
         }
     }
@@ -152,6 +197,9 @@ pub fn steps(spec: &FolderSpec) -> Vec<StepKind> {
     if remote_dest {
         out.push(StepKind::CheckDest);
     }
+    if spec.before.is_some() {
+        out.push(StepKind::Before);
+    }
     match spec.source {
         Remote { .. } => out.extend([StepKind::Pack, StepKind::Download]),
         Local { .. } => out.push(StepKind::PackLocal),
@@ -160,6 +208,9 @@ pub fn steps(spec: &FolderSpec) -> Vec<StepKind> {
         out.extend([StepKind::Upload, StepKind::UnpackRemote]);
         if spec.owner.is_some() {
             out.push(StepKind::SetOwner);
+        }
+        if spec.after.is_some() {
+            out.push(StepKind::After);
         }
     } else if spec.unpack {
         out.push(StepKind::Unpack);
@@ -210,6 +261,28 @@ pub fn check_spec(spec: &FolderSpec) -> AppResult<()> {
     }
     if let Some(owner) = &spec.owner {
         check_owner(owner)?;
+    }
+    check_excludes(&spec.excludes)?;
+    let remote_src = matches!(spec.source, Endpoint::Remote { .. });
+    let remote_dst = matches!(spec.destination, Endpoint::Remote { .. });
+    if let Some(h) = &spec.before {
+        if !remote_src {
+            return Err(AppError::Validation(
+                "a script before the transfer runs on the source server".into(),
+            ));
+        }
+        h.check("script before")?;
+    }
+    if let Some(h) = &spec.after {
+        if !remote_dst {
+            return Err(AppError::Validation(
+                "a script after the transfer runs on the destination server".into(),
+            ));
+        }
+        h.check("script after")?;
+    }
+    if (spec.sudo_source && !remote_src) || (spec.sudo_dest && !remote_dst) {
+        return Err(AppError::Validation("sudo applies to servers only".into()));
     }
     Ok(())
 }
@@ -290,9 +363,10 @@ fn is_own_archive(path: &str) -> bool {
         .is_some_and(|id| id.len() == 12 && id.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// Resolves `~` and `~/…` like a shell would (quoting stops the shell from doing it).
+/// Resolves `~` and `~/…` like a shell would (quoting stops the shell from doing it), against
+/// the login user's home `$h` (see [`remote`]), which stays right under `sudo`.
 const RESOLVE: &str = r#"p=$1
-case $p in '~') p=$HOME ;; '~/'*) p=$HOME/${p#'~/'} ;; esac
+case $p in '~') p=$h ;; '~/'*) p=$h/${p#'~/'} ;; esac
 "#;
 
 /// Exit codes of the remote scripts, explained in the tab.
@@ -321,13 +395,15 @@ if [ -n "$size" ] && [ -n "$free" ] && [ "$free" -lt "$size" ]; then
 fi
 "#;
 
-const PACK: &str = r#"out=$2
+/// Args: folder, archive, python packer, then exclude patterns (see [`exclude_patterns`]).
+const PACK: &str = r#"out=$2; py=$3; shift 3
 cd -- "$(dirname -- "$p")" || exit 13
 name=$(basename -- "$p")
 umask 077
 rm -f -- "$out" "$out.sum"
-if command -v zip >/dev/null 2>&1; then zip -r -y -q "$out" "./$name"; rc=$?
-else python3 -c "$3" "$name" "$out"; rc=$?; fi
+if command -v zip >/dev/null 2>&1; then
+  if [ $# -gt 0 ]; then zip -r -y -q "$out" "./$name" -x "$@"; else zip -r -y -q "$out" "./$name"; fi; rc=$?
+else python3 -c "$py" "$name" "$out" "$@"; rc=$?; fi
 if [ $rc -eq 18 ]; then echo 'Some files could not be read and were left out (see above).' >&2
 elif [ $rc -ne 0 ]; then rm -f -- "$out"; exit $rc; fi
 if command -v sha256sum >/dev/null 2>&1; then sum=$(sha256sum -- "$out" | cut -d' ' -f1)
@@ -340,6 +416,8 @@ print(h.hexdigest())' "$out")
 else sum=-; fi
 bytes=$(wc -c < "$out" | tr -d ' ')
 printf '%s %s %s\n' "$sum" "$bytes" "$name" > "$out.sum"
+# Zipped with sudo: hand the archive to the login user, who downloads and deletes it.
+if [ -n "$SUDO_USER" ]; then chown -- "$SUDO_USER" "$out" "$out.sum" || exit 13; fi
 echo "Zipped $name: $(( bytes / 1048576 )) MB"
 exit $rc
 "#;
@@ -477,12 +555,25 @@ fn check_entry_name(name: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// `sh -c '<script>' ridgessh "$HOME" '<arg>'…`: the login shell expands `$HOME` (so it is the
+/// login user's even when the command runs under `sudo`); the script sees it as `$h` and its
+/// own arguments as `$1`…
 fn remote(script: &str, args: &[&str]) -> String {
     let args: String = args
         .iter()
         .map(|a| format!(" {}", posix_quote(a)))
         .collect();
-    format!("sh -c {} ridgessh{args}", posix_quote(script))
+    let script = format!("h=$1; shift\n{script}");
+    format!("sh -c {} ridgessh \"$HOME\"{args}", posix_quote(&script))
+}
+
+/// Runs `command` (one of the commands built here) as root. `-p` gives a clear prompt; the
+/// ssh session needs a terminal (`-t`) for it.
+pub fn with_sudo(command: &str) -> String {
+    format!(
+        "sudo -p {} {command}",
+        posix_quote("[sudo] password for %u on %h: ")
+    )
 }
 
 /// Checks the folder, the packer and free space in /tmp.
@@ -492,9 +583,54 @@ pub fn check_command(path: &str) -> AppResult<String> {
 }
 
 /// Zips the folder into `archive` and writes `archive.sum` ("<sha256> <bytes> <name>").
-pub fn pack_command(path: &str, archive: &str) -> AppResult<String> {
+pub fn pack_command(path: &str, archive: &str, excludes: &[String]) -> AppResult<String> {
     let path = check_remote_path(path)?;
-    Ok(remote(&format!("{RESOLVE}{PACK}"), &[path, archive, PYZIP]))
+    let mut args = vec![path, archive, PYZIP];
+    args.extend(excludes.iter().map(String::as_str));
+    Ok(remote(&format!("{RESOLVE}{PACK}"), &args))
+}
+
+/// What the user typed to leave out: one name or relative path per entry, wildcards allowed.
+pub fn check_excludes(excludes: &[String]) -> AppResult<()> {
+    if excludes.len() > 100 {
+        return Err(AppError::Validation("at most 100 exclude patterns".into()));
+    }
+    for e in excludes {
+        let t = e.trim();
+        if t.is_empty()
+            || t.len() > 256
+            || t.chars().any(char::is_control)
+            || t.starts_with('-')
+            || t.split('/').any(|c| c == "..")
+        {
+            return Err(AppError::Validation(format!(
+                "unusable exclude pattern {e:?}"
+            )));
+        }
+        glob::Pattern::new(t)
+            .map_err(|err| AppError::Validation(format!("exclude pattern {e:?}: {err}")))?;
+    }
+    Ok(())
+}
+
+/// Turns the user's patterns into archive-path patterns, the same for `zip -x`, the python
+/// packer and the local packer (`*` matches across `/` in all three). A plain name
+/// (`node_modules`, `*.log`) matches at any depth; one with a `/` (`storage/cache`) is
+/// relative to the folder, whose name is `name` (`*` when not known in advance).
+pub fn exclude_patterns(name: Option<&str>, excludes: &[String]) -> Vec<String> {
+    excludes
+        .iter()
+        .map(|e| e.trim().trim_matches('/'))
+        .filter(|e| !e.is_empty())
+        .flat_map(|e| {
+            let base = if e.contains('/') {
+                format!("{}/{e}", name.unwrap_or("*"))
+            } else {
+                format!("*/{e}")
+            };
+            [base.clone(), format!("{base}/*")]
+        })
+        .collect()
 }
 
 pub fn cleanup_command(archive: &str) -> AppResult<String> {
@@ -644,5 +780,7 @@ pub fn find_tar() -> AppResult<PathBuf> {
 
 #[cfg(test)]
 mod flow_tests;
+#[cfg(test)]
+mod phase3_tests;
 #[cfg(test)]
 mod tests;

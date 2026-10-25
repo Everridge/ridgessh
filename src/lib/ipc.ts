@@ -393,6 +393,40 @@ export interface FolderSpec {
   existing: ExistingPolicy;
   /** Server as destination: chown -R the result (`user` or `user:group`). */
   owner?: string | null;
+  /** Names or relative paths to leave out (`node_modules`, `*.log`, `storage/cache`). */
+  excludes?: string[];
+  /** Check and zip the source folder as root. */
+  sudoSource?: boolean;
+  /** Check, unpack and set the owner at the destination as root. */
+  sudoDest?: boolean;
+  /** Runs on the source server before zipping. */
+  before?: FolderHook | null;
+  /** Runs on the destination server after unpacking. */
+  after?: FolderHook | null;
+}
+
+/** A script around a folder transfer: a library script or a command line. */
+export interface FolderHook {
+  scriptId?: string | null;
+  command?: string | null;
+}
+
+/** A saved folder transfer. */
+export interface FolderRecipe {
+  id: string;
+  name: string;
+  spec: FolderSpec;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+  /** 0 = finished, other = failed; null after a run = cancelled. */
+  lastExitCode: number | null;
+}
+
+export interface RemoteListing {
+  path: string;
+  entries: { name: string; dir: boolean }[];
+  truncated: boolean;
 }
 
 export type StepKind =
@@ -405,6 +439,8 @@ export type StepKind =
   | "upload"
   | "unpackRemote"
   | "setOwner"
+  | "before"
+  | "after"
   | "cleanup";
 export type StepStatus = "pending" | "running" | "done" | "warning" | "failed" | "skipped";
 
@@ -621,12 +657,29 @@ export const api = {
   folderOpen: (
     spec: FolderSpec,
     resume: string | null,
+    recipeId: string | null,
     cols: number,
     rows: number,
     onData: Channel<ArrayBuffer>,
     onExit: Channel<TerminalExit>,
     onStep: Channel<StepEvent>,
-  ) => invoke<FolderOpened>("folder_open", { spec, resume, cols, rows, onData, onExit, onStep }),
+  ) =>
+    invoke<FolderOpened>("folder_open", {
+      spec,
+      resume,
+      recipeId,
+      cols,
+      rows,
+      onData,
+      onExit,
+      onStep,
+    }),
+  folderBrowse: (hostId: string, user: string | null, path: string) =>
+    invoke<RemoteListing>("folder_browse", { hostId, user, path }),
+  recipesList: () => invoke<FolderRecipe[]>("recipes_list"),
+  recipeSave: (id: string | null, name: string, spec: FolderSpec) =>
+    invoke<FolderRecipe>("recipe_save", { id, name, spec }),
+  recipeDelete: (id: string) => invoke<void>("recipe_delete", { id }),
   folderLast: (hostId: string) =>
     invoke<{ remote: string | null; dest: string | null; local: string | null }>("folder_last", {
       hostId,

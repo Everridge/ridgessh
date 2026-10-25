@@ -1,7 +1,8 @@
 import { useId, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { FolderOpenIcon } from "lucide-react";
+import { BookmarkIcon, FolderOpenIcon, FolderSearchIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -23,12 +24,33 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useHostsData, useVariants, variantsFor } from "@/features/hosts/queries";
+import { keys, useHostsData, useVariants, variantsFor } from "@/features/hosts/queries";
 import { UserSelect } from "@/features/hosts/user-select";
 import { useTerminalStore } from "@/features/terminal/store";
-import { api, type ExistingPolicy, type FolderSpec, type Host, type UserVariant } from "@/lib/ipc";
+import {
+  api,
+  errorMessage,
+  type ExistingPolicy,
+  type FolderSpec,
+  type Host,
+  type UserVariant,
+} from "@/lib/ipc";
 import { useUiStore, type FolderMode } from "@/stores/ui";
-import { EXISTING_LABELS, folderName, planSteps, tabTitle, validOwner } from "./folder-plan";
+import { ExcludesInput, HookPicker } from "./folder-options";
+import {
+  EXISTING_LABELS,
+  folderName,
+  hookReady,
+  hookToSpec,
+  initialFor,
+  initialFromSpec,
+  parseExcludes,
+  planSteps,
+  tabTitle,
+  validOwner,
+  type FolderInitial,
+} from "./folder-plan";
+import { RemoteBrowser } from "./remote-browser";
 
 const TITLES: Record<FolderMode, string> = {
   download: "Download folder",
@@ -40,16 +62,23 @@ const START: Record<FolderMode, string> = { download: "Download", upload: "Uploa
 export function FolderDialog() {
   const target = useUiStore((s) => s.folderTransfer);
   const close = useUiStore((s) => s.closeFolderTransfer);
-  const host = useHostsData().find((h) => h.id === target?.hostId);
+  const hosts = useHostsData();
+  const initial: FolderInitial | null = !target
+    ? null
+    : target.recipe
+      ? initialFromSpec(target.recipe.spec)
+      : initialFor(target.mode, target.hostId, target.user ?? null);
+  const host = hosts.find((h) => h.id === initial?.hostId);
+  const recipe = target?.recipe ? { id: target.recipe.id, name: target.recipe.name } : null;
   return (
-    <Dialog open={!!target && !!host} onOpenChange={(o) => !o && close()}>
+    <Dialog open={!!initial && !!host} onOpenChange={(o) => !o && close()}>
       <DialogContent className="flex max-h-[90vh] flex-col gap-3 sm:max-w-2xl">
-        {target && host && (
+        {initial && host && (
           <Body
-            key={`${host.id}:${target.mode}`}
+            key={recipe?.id ?? `${host.id}:${initial.mode}`}
             host={host}
-            initialMode={target.mode}
-            initialUser={target.user ?? null}
+            initial={initial}
+            recipe={recipe}
             onDone={close}
           />
         )}
@@ -65,34 +94,46 @@ const useLast = (hostId: string | null) =>
     enabled: !!hostId,
   }).data;
 
+/** Which remote path field a folder browser fills in. */
+type Browsing = { field: "src" | "dst"; hostId: string; user: string | null; start: string };
+
 function Body({
   host,
-  initialMode,
-  initialUser,
+  initial,
+  recipe: initialRecipe,
   onDone,
 }: {
   host: Host;
-  initialMode: FolderMode;
-  initialUser: string | null;
+  initial: FolderInitial;
+  recipe: { id: string; name: string } | null;
   onDone: () => void;
 }) {
+  const qc = useQueryClient();
   const hosts = useHostsData();
   const variants = useVariants();
-  const [mode, setMode] = useState(initialMode);
-  // The host the dialog was opened for, and the second server when copying.
-  const [user, setUser] = useState(initialUser);
-  const [otherId, setOtherId] = useState<string | null>(null);
-  const [otherUser, setOtherUser] = useState<string | null>(null);
+  const [mode, setMode] = useState(initial.mode);
+  const [user, setUser] = useState(initial.user);
+  const [otherId, setOtherId] = useState(initial.otherId);
+  const [otherUser, setOtherUser] = useState(initial.otherUser);
   // Typed values; null = what was used last time.
-  const [srcPath, setSrcPath] = useState<string | null>(null);
-  const [dstPath, setDstPath] = useState<string | null>(null);
-  const [localSrc, setLocalSrc] = useState("");
-  const [localDst, setLocalDst] = useState<string | null>(null);
-  const [unpack, setUnpack] = useState(false);
-  const [keepZip, setKeepZip] = useState(true);
-  const [keepCopy, setKeepCopy] = useState<string | null>(null);
-  const [existing, setExisting] = useState<ExistingPolicy>("backup");
-  const [owner, setOwner] = useState("");
+  const [srcPath, setSrcPath] = useState(initial.srcPath);
+  const [dstPath, setDstPath] = useState(initial.dstPath);
+  const [localSrc, setLocalSrc] = useState(initial.localSrc);
+  const [localDst, setLocalDst] = useState(initial.localDst);
+  const [unpack, setUnpack] = useState(initial.unpack);
+  const [keepZip, setKeepZip] = useState(initial.keepZip);
+  const [keepCopy, setKeepCopy] = useState(initial.keepCopy);
+  const [existing, setExisting] = useState<ExistingPolicy>(initial.existing);
+  const [owner, setOwner] = useState(initial.owner);
+  const [excludes, setExcludes] = useState(initial.excludes);
+  const [sudoSource, setSudoSource] = useState(initial.sudoSource);
+  const [sudoDest, setSudoDest] = useState(initial.sudoDest);
+  const [before, setBefore] = useState(initial.before);
+  const [after, setAfter] = useState(initial.after);
+  const [recipe, setRecipe] = useState(initialRecipe);
+  // Saving: the name being typed (null = not saving).
+  const [recipeName, setRecipeName] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState<Browsing | null>(null);
 
   const last = useLast(host.id);
   const otherLast = useLast(otherId);
@@ -105,6 +146,7 @@ function Body({
   const remoteDstPath = dstPath ?? (mode === "copy" ? otherLast?.dest : last?.dest) ?? "";
   const localDstPath = localDst ?? last?.local ?? "";
   const ownerValue = owner.trim();
+  const remoteSource = mode !== "upload";
   const remoteDest = mode !== "download";
 
   const spec = ((): FolderSpec | null => {
@@ -115,6 +157,11 @@ function Body({
       keepCopy: null,
       existing,
       owner: remoteDest && ownerValue ? ownerValue : null,
+      excludes: parseExcludes(excludes),
+      sudoSource: remoteSource && sudoSource,
+      sudoDest: remoteDest && sudoDest,
+      before: remoteSource ? hookToSpec(before) : null,
+      after: remoteDest ? hookToSpec(after) : null,
     };
     switch (mode) {
       case "download":
@@ -152,7 +199,9 @@ function Body({
     spec.source.path !== "" &&
     spec.destination.path !== "" &&
     (!ownerValue || validOwner(ownerValue)) &&
-    keepCopy !== "";
+    keepCopy !== "" &&
+    (!remoteSource || hookReady(before)) &&
+    (!remoteDest || hookReady(after));
 
   const pick = async (title: string, current: string) => {
     const dir = await openDialog({ directory: true, title, defaultPath: current || undefined });
@@ -163,8 +212,25 @@ function Body({
     if (!spec) return;
     useTerminalStore
       .getState()
-      .openJob({ id: host.id, alias: host.alias }, { kind: "folder", spec }, tabTitle(spec, alias));
+      .openJob(
+        { id: host.id, alias: host.alias },
+        { kind: "folder", spec, recipeId: recipe?.id ?? null },
+        tabTitle(spec, alias),
+      );
     onDone();
+  };
+
+  const saveRecipe = async (name: string) => {
+    if (!spec) return;
+    try {
+      const saved = await api.recipeSave(recipe?.id ?? null, name, spec);
+      setRecipe({ id: saved.id, name: saved.name });
+      setRecipeName(null);
+      void qc.invalidateQueries({ queryKey: keys.recipes });
+      toast.success(recipe ? `Recipe "${saved.name}" updated` : `Saved as "${saved.name}"`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
   };
 
   const name = spec ? folderName(spec.source.path) : "";
@@ -172,11 +238,13 @@ function Body({
     name && remoteDstPath.trim()
       ? `The folder ends up as ${remoteDstPath.trim().replace(/\/+$/, "")}/${name}`
       : "The folder is placed inside this one; it is created if missing.";
+  const destHost = mode === "copy" ? otherId : host.id;
+  const destUser = mode === "copy" ? otherUser : user;
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{TITLES[mode]}</DialogTitle>
+        <DialogTitle>{recipe ? `${TITLES[mode]}: ${recipe.name}` : TITLES[mode]}</DialogTitle>
         <DialogDescription>
           The folder is zipped where it is and carried over as one archive (much faster than many
           small files), with a checksum check. Runs in a terminal tab, so you can answer prompts
@@ -216,6 +284,9 @@ function Body({
                   value={remoteSrcPath}
                   onChange={setSrcPath}
                   placeholder="/var/www/site or ~/app"
+                  onBrowse={() =>
+                    setBrowsing({ field: "src", hostId: host.id, user, start: remoteSrcPath })
+                  }
                 />
               </>
             )}
@@ -272,6 +343,17 @@ function Body({
                 onChange={setDstPath}
                 placeholder="/var/www"
                 hint={dstHint}
+                onBrowse={
+                  destHost
+                    ? () =>
+                        setBrowsing({
+                          field: "dst",
+                          hostId: destHost,
+                          user: destUser,
+                          start: remoteDstPath,
+                        })
+                    : undefined
+                }
               />
             )}
             {(remoteDest || unpack) && <ExistingSelect value={existing} onChange={setExisting} />}
@@ -280,6 +362,7 @@ function Body({
                 value={owner}
                 onChange={setOwner}
                 invalid={!!ownerValue && !validOwner(ownerValue)}
+                sudo={sudoDest}
               />
             )}
             {mode === "copy" && (
@@ -306,6 +389,61 @@ function Body({
             )}
           </fieldset>
 
+          <details className="group rounded-md border px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium select-none">
+              More options: leave out, sudo, scripts
+            </summary>
+            <div className="grid gap-4 pt-3">
+              <ExcludesInput value={excludes} onChange={setExcludes} />
+              {remoteSource && (
+                <label className="flex items-start gap-2 text-sm">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={sudoSource}
+                    onCheckedChange={(v) => setSudoSource(v === true)}
+                  />
+                  <span>
+                    Read the source folder with sudo
+                    <span className="block text-xs text-muted-foreground">
+                      For folders only root can read. sudo may ask for your password in the tab.
+                    </span>
+                  </span>
+                </label>
+              )}
+              {remoteDest && (
+                <label className="flex items-start gap-2 text-sm">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={sudoDest}
+                    onCheckedChange={(v) => setSudoDest(v === true)}
+                  />
+                  <span>
+                    Unpack (and set the owner) with sudo
+                    <span className="block text-xs text-muted-foreground">
+                      For destinations only root can write, such as /var/www or /opt.
+                    </span>
+                  </span>
+                </label>
+              )}
+              {remoteSource && (
+                <HookPicker
+                  label="Script before (on the source server)"
+                  hint="Runs before zipping, e.g. dump a database or stop a service. A failure stops the transfer."
+                  value={before}
+                  onChange={setBefore}
+                />
+              )}
+              {remoteDest && (
+                <HookPicker
+                  label="Script after (on the destination server)"
+                  hint="Runs after unpacking, e.g. restart a service or run migrations."
+                  value={after}
+                  onChange={setAfter}
+                />
+              )}
+            </div>
+          </details>
+
           {spec && (
             <ol
               aria-label="What will happen"
@@ -319,14 +457,61 @@ function Body({
         </div>
       </ScrollArea>
 
-      <DialogFooter>
-        <Button variant="outline" onClick={onDone}>
-          Cancel
-        </Button>
-        <Button disabled={!ready} onClick={start}>
-          {START[mode]}
-        </Button>
+      <DialogFooter className="items-center gap-2 sm:justify-between">
+        {recipeName !== null ? (
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveRecipe(recipeName);
+            }}
+          >
+            <Input
+              aria-label="Recipe name"
+              value={recipeName}
+              onChange={(e) => setRecipeName(e.target.value)}
+              placeholder="e.g. prod uploads → stage"
+              className="h-8 w-56"
+              autoFocus
+            />
+            <Button size="sm" type="submit" disabled={!recipeName.trim() || !spec}>
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" type="button" onClick={() => setRecipeName(null)}>
+              Cancel
+            </Button>
+          </form>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!ready}
+            onClick={() => setRecipeName(recipe?.name ?? "")}
+          >
+            <BookmarkIcon /> {recipe ? "Update recipe…" : "Save as recipe…"}
+          </Button>
+        )}
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={onDone}>
+            Cancel
+          </Button>
+          <Button disabled={!ready} onClick={start}>
+            {START[mode]}
+          </Button>
+        </div>
       </DialogFooter>
+
+      {browsing && (
+        <RemoteBrowser
+          open
+          onOpenChange={(o) => !o && setBrowsing(null)}
+          hostId={browsing.hostId}
+          user={browsing.user}
+          start={browsing.start}
+          title={browsing.field === "src" ? "Choose the folder to copy" : "Choose where to put it"}
+          onChoose={(p) => (browsing.field === "src" ? setSrcPath(p) : setDstPath(p))}
+        />
+      )}
     </>
   );
 }
@@ -413,25 +598,34 @@ function PathInput({
   onChange,
   placeholder,
   hint,
+  onBrowse,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
   hint?: string;
+  onBrowse?: () => void;
 }) {
   const id = useId();
   return (
     <div className="grid gap-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <Input
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="font-mono"
-        spellCheck={false}
-      />
+      <div className="flex gap-2">
+        <Input
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="font-mono"
+          spellCheck={false}
+        />
+        {onBrowse && (
+          <Button variant="outline" onClick={onBrowse} aria-label={`Browse: ${label}`}>
+            <FolderSearchIcon /> Browse…
+          </Button>
+        )}
+      </div>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
@@ -499,10 +693,12 @@ function OwnerInput({
   value,
   onChange,
   invalid,
+  sudo,
 }: {
   value: string;
   onChange: (v: string) => void;
   invalid: boolean;
+  sudo: boolean;
 }) {
   const id = useId();
   return (
@@ -520,7 +716,9 @@ function OwnerInput({
       <p className="text-xs text-muted-foreground">
         {invalid
           ? "Use user or user:group."
-          : "Zip does not keep file owners. Changing the owner needs root on the server (sudo comes in a later version)."}
+          : sudo
+            ? "Zip does not keep file owners; this sets them with sudo after unpacking."
+            : "Zip does not keep file owners. Changing them needs root: connect as root, or turn on sudo under More options."}
       </p>
     </div>
   );

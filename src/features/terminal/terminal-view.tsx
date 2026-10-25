@@ -195,7 +195,7 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
           return api.scriptOpen(job.run, cols, rows, onData, onExit);
         case "folder":
           return api
-            .folderOpen(job.spec, resume, cols, rows, onData, onExit, onStep)
+            .folderOpen(job.spec, resume, job.recipeId ?? null, cols, rows, onData, onExit, onStep)
             .then((opened) => {
               if (!disposed) {
                 setRun(

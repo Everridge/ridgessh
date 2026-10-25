@@ -89,6 +89,7 @@ describe("folder dialog", () => {
     expect(tab.title).toBe("⇣ app ← web");
     expect(tab.job).toEqual({
       kind: "folder",
+      recipeId: null,
       spec: {
         source: { kind: "remote", hostId: backend.hosts[0].id, user: null, path: "/srv/app/" },
         destination: { kind: "local", path: "C:\\Downloads" },
@@ -97,6 +98,11 @@ describe("folder dialog", () => {
         keepCopy: null,
         existing: "backup",
         owner: null,
+        excludes: [],
+        sudoSource: false,
+        sudoDest: false,
+        before: null,
+        after: null,
       },
     });
   });
