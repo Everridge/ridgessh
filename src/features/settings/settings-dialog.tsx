@@ -32,6 +32,7 @@ import {
   useSettings,
 } from "@/features/backup/queries";
 import { useUpdateStore } from "@/features/updates/store";
+import { TerminalSettings } from "./terminal-settings";
 import { api, type Settings, type SettingsView } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
 import { platform } from "@/lib/platform";
@@ -46,7 +47,7 @@ export function SettingsDialog() {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Backups, the SSH config confirmation word, updates and app info.
+            Backups, the SSH config confirmation word, the terminal, updates and app info.
           </DialogDescription>
         </DialogHeader>
         {/* Re-mount the form whenever the saved settings change. */}
@@ -76,6 +77,7 @@ function SettingsForm({ view, onClose }: { view: SettingsView; onClose: () => vo
         <TabsList>
           <TabsTrigger value="backups">Backups</TabsTrigger>
           <TabsTrigger value="config">Config & trash</TabsTrigger>
+          <TabsTrigger value="terminal">Terminal</TabsTrigger>
           <TabsTrigger value="about">About</TabsTrigger>
         </TabsList>
         <ScrollArea className="min-h-0 flex-1">
@@ -176,6 +178,10 @@ function SettingsForm({ view, onClose }: { view: SettingsView; onClose: () => vo
                 characters, no spaces.
               </p>
             </Section>
+          </TabsContent>
+
+          <TabsContent value="terminal" className="py-3 pr-3">
+            <TerminalSettings s={s} set={set} />
           </TabsContent>
 
           <TabsContent value="about" className="grid gap-6 py-3 pr-3">

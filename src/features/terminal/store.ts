@@ -1,11 +1,21 @@
 import { create } from "zustand";
-import type { ScriptRun, TransferSpec } from "@/lib/ipc";
+import type { FolderSpec, ScriptRun, StepStatus, TransferSpec } from "@/lib/ipc";
 
 export type TabStatus = "connecting" | "open" | "exited" | "error";
 
 /** What a tab runs: an interactive session, a file transfer or a script. */
 export type TabJob =
-  { kind: "ssh" } | { kind: "transfer"; spec: TransferSpec } | { kind: "script"; run: ScriptRun };
+  /** `user`: connect as `user@alias` (a per-user `Match` block). */
+  | { kind: "ssh"; user?: string | null }
+  | { kind: "transfer"; spec: TransferSpec }
+  | { kind: "script"; run: ScriptRun }
+  | { kind: "folder"; spec: FolderSpec };
+
+export interface FolderStep {
+  label: string;
+  status: StepStatus;
+  detail: string | null;
+}
 
 export interface TerminalTab {
   id: string;
@@ -20,12 +30,21 @@ export interface TerminalTab {
   generation: number;
   /** Bumped to stop the running process (output stays in the tab). */
   stopSignal: number;
+  /** Folder transfers: the backend's run (for Retry) and its steps. */
+  run?: { id: string; steps: FolderStep[] } | null;
+}
+
+/** The run to continue: one whose last attempt stopped before every step finished. */
+export function resumableRun(tab: TerminalTab): string | null {
+  const steps = tab.run?.steps ?? [];
+  const unfinished = steps.some((s) => !["done", "warning", "skipped"].includes(s.status));
+  return tab.run && unfinished ? tab.run.id : null;
 }
 
 interface TerminalState {
   tabs: TerminalTab[];
   activeId: string | null;
-  open: (host: { id: string; alias: string }) => string;
+  open: (host: { id: string; alias: string }, user?: string | null) => string;
   openJob: (host: { id: string; alias: string }, job: TabJob, title: string) => string;
   close: (id: string) => void;
   activate: (id: string) => void;
@@ -33,6 +52,8 @@ interface TerminalState {
   setProgress: (id: string, progress: number) => void;
   reconnect: (id: string) => void;
   stop: (id: string) => void;
+  setRun: (id: string, runId: string, labels: string[]) => void;
+  setStep: (id: string, index: number, status: StepStatus, detail: string | null) => void;
 }
 
 let seq = 0;
@@ -63,9 +84,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
   return {
     tabs: [],
     activeId: null,
-    open: (host) => {
-      const same = get().tabs.filter((t) => t.hostId === host.id && t.job.kind === "ssh").length;
-      return add(host.id, same ? `${host.alias} (${same + 1})` : host.alias, { kind: "ssh" });
+    open: (host, user = null) => {
+      const name = user ? `${user}@${host.alias}` : host.alias;
+      const same = get().tabs.filter(
+        (t) => t.hostId === host.id && t.job.kind === "ssh" && (t.job.user ?? null) === user,
+      ).length;
+      return add(host.id, same ? `${name} (${same + 1})` : name, { kind: "ssh", user });
     },
     openJob: (host, job, title) => add(host.id, title, job),
     close: (id) =>
@@ -82,6 +106,34 @@ export const useTerminalStore = create<TerminalState>((set, get) => {
     setProgress: (id, progress) =>
       set((s) => ({
         tabs: s.tabs.map((t) => (t.id === id && t.progress !== progress ? { ...t, progress } : t)),
+      })),
+    setRun: (id, runId, labels) =>
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                run: {
+                  id: runId,
+                  steps: labels.map((label) => ({ label, status: "pending", detail: null })),
+                },
+              }
+            : t,
+        ),
+      })),
+    setStep: (id, index, status, detail) =>
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === id && t.run
+            ? {
+                ...t,
+                run: {
+                  ...t.run,
+                  steps: t.run.steps.map((st, i) => (i === index ? { ...st, status, detail } : st)),
+                },
+              }
+            : t,
+        ),
       })),
     stop: (id) =>
       set((s) => ({

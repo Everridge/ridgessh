@@ -32,10 +32,26 @@ pub struct TerminalExit {
     pub exit_code: Option<u32>,
 }
 
+/// A stable id for a tab that runs several processes one after another (folder transfers).
+/// Writes, resizes and close requests to it go to whichever process is current; input that
+/// arrives between processes is held for the next one (ConPTY waits for the reply to its
+/// startup cursor-position query, so it must not be lost).
+#[derive(Default)]
+struct Route {
+    current: Option<String>,
+    pending: Vec<u8>,
+    cancelled: bool,
+    size: (u16, u16),
+}
+
 #[derive(Default)]
 pub struct TerminalManager {
     sessions: Mutex<HashMap<String, Session>>,
+    routes: Mutex<HashMap<String, Route>>,
 }
+
+/// Receives a process's output; returning `false` stops reading (the webview is gone).
+pub type DataSink = Box<dyn FnMut(&[u8]) -> bool + Send>;
 
 fn lock_err<T>(_: T) -> AppError {
     AppError::Other("terminal lock poisoned".into())
@@ -60,6 +76,28 @@ impl TerminalManager {
         req: SpawnRequest<'_>,
         on_data: Channel,
         on_exit: Channel<TerminalExit>,
+        on_finished: impl FnOnce(Option<u32>) + Send + 'static,
+    ) -> AppResult<String> {
+        self.spawn_with(
+            req,
+            Box::new(move |bytes| {
+                on_data
+                    .send(InvokeResponseBody::Raw(bytes.to_vec()))
+                    .is_ok()
+            }),
+            move |code| {
+                on_finished(code);
+                let _ = on_exit.send(TerminalExit { exit_code: code });
+            },
+        )
+    }
+
+    /// Like [`spawn`](Self::spawn), with output going to `on_data`; `on_finished` runs after
+    /// the process exited and all its output was delivered.
+    pub fn spawn_with(
+        self: &Arc<Self>,
+        req: SpawnRequest<'_>,
+        mut on_data: DataSink,
         on_finished: impl FnOnce(Option<u32>) + Send + 'static,
     ) -> AppResult<String> {
         let pty = native_pty_system()
@@ -105,10 +143,7 @@ impl TerminalManager {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            if on_data
-                                .send(InvokeResponseBody::Raw(buf[..n].to_vec()))
-                                .is_err()
-                            {
+                            if !on_data(&buf[..n]) {
                                 break; // webview gone
                             }
                         }
@@ -128,13 +163,82 @@ impl TerminalManager {
                 }
                 let _ = reader_thread.join();
                 on_finished(code);
-                let _ = on_exit.send(TerminalExit { exit_code: code });
             })?;
 
         Ok(id)
     }
 
+    /// Starts a route (see [`Route`]) with the tab's current size.
+    pub fn open_route(&self, id: &str, cols: u16, rows: u16) -> AppResult<()> {
+        self.routes.lock().map_err(lock_err)?.insert(
+            id.to_string(),
+            Route {
+                size: (cols, rows),
+                ..Default::default()
+            },
+        );
+        Ok(())
+    }
+
+    /// Points the route at `session` (or at nothing between processes), handing over input
+    /// that was typed in the meantime.
+    pub fn set_route(&self, id: &str, session: Option<&str>) -> AppResult<()> {
+        // Held while flushing, so held input goes out before anything typed after it.
+        // Lock order everywhere: routes, then sessions.
+        let mut routes = self.routes.lock().map_err(lock_err)?;
+        let Some(route) = routes.get_mut(id) else {
+            return Ok(());
+        };
+        route.current = session.map(str::to_string);
+        if let Some(s) = session
+            && !route.pending.is_empty()
+        {
+            let pending = std::mem::take(&mut route.pending);
+            self.write_session(s, &pending)?;
+        }
+        Ok(())
+    }
+
+    /// The size for the route's next process, and whether it was closed.
+    pub fn route_state(&self, id: &str) -> ((u16, u16), bool) {
+        self.routes
+            .lock()
+            .ok()
+            .and_then(|r| r.get(id).map(|r| (r.size, r.cancelled)))
+            .unwrap_or(((80, 24), true))
+    }
+
+    pub fn close_route(&self, id: &str) {
+        if let Ok(mut routes) = self.routes.lock() {
+            routes.remove(id);
+        }
+    }
+
+    /// Where input for `id` goes: a session id, or `None` to hold it (a route between
+    /// processes). Plain session ids map to themselves.
+    fn resolve(&self, id: &str, data: Option<&[u8]>) -> AppResult<Option<String>> {
+        let mut routes = self.routes.lock().map_err(lock_err)?;
+        match routes.get_mut(id) {
+            None => Ok(Some(id.to_string())),
+            Some(route) => {
+                if route.current.is_none()
+                    && let Some(d) = data
+                {
+                    route.pending.extend_from_slice(d);
+                }
+                Ok(route.current.clone())
+            }
+        }
+    }
+
     pub fn write(&self, id: &str, data: &[u8]) -> AppResult<()> {
+        match self.resolve(id, Some(data))? {
+            Some(session) => self.write_session(&session, data),
+            None => Ok(()),
+        }
+    }
+
+    fn write_session(&self, id: &str, data: &[u8]) -> AppResult<()> {
         let mut sessions = self.sessions.lock().map_err(lock_err)?;
         let s = sessions
             .get_mut(id)
@@ -145,6 +249,13 @@ impl TerminalManager {
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> AppResult<()> {
+        if let Some(route) = self.routes.lock().map_err(lock_err)?.get_mut(id) {
+            route.size = (cols, rows);
+        }
+        let Some(id) = self.resolve(id, None)? else {
+            return Ok(());
+        };
+        let id = id.as_str();
         let sessions = self.sessions.lock().map_err(lock_err)?;
         let s = sessions
             .get(id)
@@ -159,10 +270,17 @@ impl TerminalManager {
             .map_err(pty_err)
     }
 
-    /// Kills the process; cleanup happens on the waiter thread.
+    /// Kills the process (for a route: cancels it and kills its current process); cleanup
+    /// happens on the waiter thread.
     pub fn close(&self, id: &str) -> AppResult<()> {
+        if let Some(route) = self.routes.lock().map_err(lock_err)?.get_mut(id) {
+            route.cancelled = true;
+        }
+        let Some(id) = self.resolve(id, None)? else {
+            return Ok(());
+        };
         let mut sessions = self.sessions.lock().map_err(lock_err)?;
-        if let Some(s) = sessions.get_mut(id) {
+        if let Some(s) = sessions.get_mut(&id) {
             kill(&mut *s.killer)?;
         }
         Ok(())
@@ -305,6 +423,45 @@ mod unix_tests {
             "{printed:?}"
         );
         assert!(!script.exists(), "the script removes itself");
+    }
+
+    #[test]
+    fn route_holds_input_until_a_process_is_attached() {
+        let manager = Arc::new(TerminalManager::default());
+        manager.open_route("r", 80, 24).unwrap();
+        // Typed (or ConPTY's cursor reply) before the step's process exists: held.
+        manager.write("r", b"hello\r").unwrap();
+        let (data_tx, data_rx) = mpsc::channel::<Vec<u8>>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let id = manager
+            .spawn_with(
+                SpawnRequest {
+                    program: &PathBuf::from("/bin/sh"),
+                    args: vec!["-c".into(), "read l; printf 'got:%s' \"$l\"".into()],
+                    cols: 80,
+                    rows: 24,
+                },
+                Box::new(move |b| {
+                    let _ = data_tx.send(b.to_vec());
+                    true
+                }),
+                move |code| done_tx.send(code).unwrap(),
+            )
+            .unwrap();
+        manager.set_route("r", Some(&id)).unwrap();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            Some(0)
+        );
+        let mut seen = Vec::new();
+        while let Ok(chunk) = data_rx.recv_timeout(Duration::from_millis(300)) {
+            seen.extend(chunk);
+        }
+        assert!(String::from_utf8_lossy(&seen).contains("got:hello"));
+
+        manager.set_route("r", None).unwrap();
+        manager.close("r").unwrap();
+        assert!(manager.route_state("r").1, "closing a route cancels it");
     }
 
     #[test]

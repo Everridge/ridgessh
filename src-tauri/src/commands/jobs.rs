@@ -119,6 +119,9 @@ pub struct ScriptRun {
     pub mode: Option<RunMode>,
     #[serde(default)]
     pub args: String,
+    /// Connect as this user (`user@alias`, see `target_args`).
+    #[serde(default)]
+    pub user: Option<String>,
 }
 
 /// Windows refuses longer command lines (32 767 characters).
@@ -156,7 +159,7 @@ pub fn script_open(
     };
     let remote = scripts::remote_command(&content, &interpreter, mode, &run.args)?;
     let ssh = find_tool("ssh")?;
-    let (mut args, destination) = host_options(&host)?;
+    let (mut args, destination) = host_options(&host, run.user.as_deref())?;
     // A remote terminal, so the script (or sudo) can ask for input.
     args.extend(["-t".into(), "--".into(), destination, remote]);
     if args.iter().map(|a| a.len() + 3).sum::<usize>() > MAX_COMMAND_LINE {

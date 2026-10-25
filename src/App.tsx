@@ -17,6 +17,7 @@ import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { UpdateDialog } from "@/features/updates/update-dialog";
 import { useStartupUpdateCheck } from "@/features/updates/use-startup-update-check";
 import { TransferDialog } from "@/features/transfer/transfer-dialog";
+import { FolderDialog } from "@/features/transfer/folder-dialog";
 import { SyncReviewDialog } from "@/features/sync/sync-review-dialog";
 import { useStartupSync } from "@/features/sync/use-startup-sync";
 import { QuickConnect } from "@/features/terminal/quick-connect";
@@ -81,6 +82,7 @@ export default function App() {
       <SettingsDialog />
       <HistoryDialog />
       <TransferDialog />
+      <FolderDialog />
       <ScriptsDialog />
       <RunScriptDialog />
       <ExportDialog />

@@ -3,6 +3,7 @@ mod commands;
 mod config_write;
 mod db;
 mod error;
+mod folder;
 mod history;
 mod paths;
 mod scp;
@@ -14,6 +15,7 @@ mod sync;
 mod terminal;
 mod transfer;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
@@ -32,6 +34,8 @@ pub struct AppState {
     pub secrets: Box<dyn backup::SecretStore>,
     /// Why the last automatic backup failed (cleared by the next success).
     pub backup_error: Mutex<Option<String>>,
+    /// Folder transfers that failed or were cancelled, kept so they can be retried.
+    pub folder_runs: Mutex<HashMap<String, folder::runner::RunState>>,
 }
 
 impl AppState {
@@ -127,6 +131,7 @@ pub fn run() {
                 terminals: Arc::new(TerminalManager::default()),
                 secrets: Box::new(backup::password::KeyringStore),
                 backup_error: Mutex::new(None),
+                folder_runs: Mutex::new(HashMap::new()),
             });
             Ok(())
         })
@@ -154,6 +159,9 @@ pub fn run() {
             commands::tags::tag_delete,
             commands::sync::sync_run,
             commands::sync::sync_last,
+            commands::folder::folder_open,
+            commands::folder::folder_last,
+            commands::sync::config_variants,
             commands::sync::sync_rename_suggestions,
             commands::sync::sync_acknowledge,
             commands::sync::sync_keep_db_only,

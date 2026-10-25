@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::db::hosts::Host;
 use crate::error::{AppError, AppResult};
-use crate::security::validate_alias;
+use crate::security::{validate_alias, validate_user};
 use crate::ssh_config::lexer::quote_arg;
 
 /// Locates `ssh` (or `scp`). The system OpenSSH is preferred (Windows' inbox copy over e.g.
@@ -47,22 +47,32 @@ pub fn find_tool(name: &str) -> AppResult<PathBuf> {
 /// exactly as in a terminal. Hosts that are not in the config, or have edits not yet written to
 /// it, get their RidgeSSH values as `-o` options (command-line options take precedence over
 /// the config file in OpenSSH).
-pub fn target_args(host: &Host) -> AppResult<Vec<String>> {
-    let (mut args, destination) = host_options(host)?;
-    args.push("--".to_string());
+///
+/// With `user` the destination is `user@alias`, exactly what one would type for a per-user
+/// `Match originalhost alias user name` block, so OpenSSH applies that block (its key).
+/// No `--` is needed: the alias and user are validated never to start with `-`.
+pub fn target_args(host: &Host, user: Option<&str>) -> AppResult<Vec<String>> {
+    let (mut args, destination) = host_options(host, user)?;
     args.push(destination);
     Ok(args)
 }
 
 /// The `-o` overrides for `host` (see [`target_args`]) and the destination alias, separately,
 /// for tools that put more arguments between them (scp, remote commands).
-pub fn host_options(host: &Host) -> AppResult<(Vec<String>, String)> {
-    let destination = host
+pub fn host_options(host: &Host, user: Option<&str>) -> AppResult<(Vec<String>, String)> {
+    let alias = host
         .config_snapshot
         .as_ref()
         .map(|s| s.alias.as_str())
         .unwrap_or(&host.alias);
-    validate_alias(destination)?;
+    validate_alias(alias)?;
+    let destination = match user {
+        Some(u) => {
+            validate_user(u)?;
+            format!("{u}@{alias}")
+        }
+        None => alias.to_string(),
+    };
 
     let mut args = Vec::new();
     if host.config_snapshot.is_none() || host.config_dirty {
@@ -73,7 +83,8 @@ pub fn host_options(host: &Host) -> AppResult<(Vec<String>, String)> {
         // Single-value fields hold a plain value and get quoted for OpenSSH's tokenizer.
         let single = [
             ("HostName", host.hostname.clone()),
-            ("User", host.user.clone()),
+            // `-o User` would win over `user@`, so it is left out when connecting as a user.
+            ("User", host.user.clone().filter(|_| user.is_none())),
             ("Port", host.port.map(|p| p.to_string())),
             ("IdentityFile", host.identity_file.clone()),
             ("ProxyJump", host.proxy_jump.clone()),
@@ -88,7 +99,7 @@ pub fn host_options(host: &Host) -> AppResult<(Vec<String>, String)> {
             opt(&d.key, d.value.clone());
         }
     }
-    Ok((args, destination.to_string()))
+    Ok((args, destination))
 }
 
 /// Quotes one word for a POSIX shell on the remote side: `it's` → `'it'\''s'`.
@@ -142,7 +153,7 @@ mod tests {
     #[test]
     fn db_only_host_passes_all_values_as_options() {
         assert_eq!(
-            target_args(&host()).unwrap(),
+            target_args(&host(), None).unwrap(),
             [
                 "-o",
                 "HostName=10.0.0.1",
@@ -154,7 +165,6 @@ mod tests {
                 "IdentityFile=\"C:\\keys\\id ed\"",
                 "-o",
                 "LocalForward=8080 localhost:80",
-                "--",
                 "web"
             ]
         );
@@ -167,7 +177,17 @@ mod tests {
             alias: "web".into(),
             ..Default::default()
         });
-        assert_eq!(target_args(&h).unwrap(), ["--", "web"]);
+        assert_eq!(target_args(&h, None).unwrap(), ["web"]);
+        assert_eq!(target_args(&h, Some("tom")).unwrap(), ["tom@web"]);
+        assert!(target_args(&h, Some("-lroot")).is_err());
+        assert!(target_args(&h, Some("a@b")).is_err());
+    }
+
+    #[test]
+    fn user_replaces_the_user_override() {
+        let args = target_args(&host(), Some("tom")).unwrap();
+        assert!(!args.iter().any(|a| a.starts_with("User=")));
+        assert_eq!(args.last().unwrap(), "tom@web");
     }
 
     #[test]
@@ -179,8 +199,8 @@ mod tests {
             alias: "web".into(),
             ..Default::default()
         });
-        let args = target_args(&h).unwrap();
-        assert_eq!(&args[args.len() - 2..], ["--", "web"]);
+        let args = target_args(&h, None).unwrap();
+        assert_eq!(args.last().unwrap(), "web");
         assert!(args.contains(&"Port=2222".to_string()));
     }
 
@@ -188,7 +208,7 @@ mod tests {
     fn refuses_option_like_destination() {
         let mut h = host();
         h.alias = "-oProxyCommand=calc".into();
-        assert!(target_args(&h).is_err());
+        assert!(target_args(&h, None).is_err());
     }
 }
 
@@ -213,7 +233,7 @@ mod real_ssh {
             value: "15433 localhost:5432".into(),
         }];
         let mut args = vec!["-G".to_string()];
-        args.extend(target_args(&h).unwrap());
+        args.extend(target_args(&h, None).unwrap());
         let out = std::process::Command::new(ssh)
             .args(&args)
             .output()
@@ -259,7 +279,7 @@ mod real_ssh_paths {
         h.extra_options.clear();
         h.identity_file = Some(r#"\\server\share\my "key""#.into());
         let mut args = vec!["-G".to_string()];
-        args.extend(target_args(&h).unwrap());
+        args.extend(target_args(&h, None).unwrap());
         let out = std::process::Command::new(ssh)
             .args(&args)
             .output()

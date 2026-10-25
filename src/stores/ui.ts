@@ -8,10 +8,12 @@ interface UiState {
   groupId: string | null;
   historyOpen: boolean;
   /** Upload / download dialog for one host. */
-  transfer: { hostId: string; direction: "upload" | "download" } | null;
+  transfer: { hostId: string; direction: "upload" | "download"; user?: string | null } | null;
+  /** Download-folder dialog (zip on the server, download, unpack). */
+  folderTransfer: { hostId: string; user?: string | null } | null;
   scriptsOpen: boolean;
   /** Run-script dialog: target hosts and an optional pre-selected script. */
-  scriptRun: { hostIds: string[]; scriptId?: string } | null;
+  scriptRun: { hostIds: string[]; scriptId?: string; user?: string | null } | null;
   settingsOpen: boolean;
   backupsOpen: boolean;
   /** Export dialog; `hostIds` pre-selects those hosts (`null` = all). */
@@ -28,6 +30,8 @@ interface UiState {
   /** Config sync review dialog. */
   syncReviewOpen: boolean;
   quickConnectOpen: boolean;
+  /** Nest hosts that point at the same server (remembered on this device). */
+  groupServers: boolean;
   /** Write-to-config dialog: `null` closed; `focus` pre-selects only those hosts. */
   configWrite: { focus: string[] | null } | null;
   setView: (view: Exclude<HostView, "group">) => void;
@@ -43,10 +47,12 @@ interface UiState {
   openConfigWrite: (focus?: string[]) => void;
   closeConfigWrite: () => void;
   setHistoryOpen: (open: boolean) => void;
-  openTransfer: (hostId: string, direction: "upload" | "download") => void;
+  openTransfer: (hostId: string, direction: "upload" | "download", user?: string | null) => void;
   closeTransfer: () => void;
+  openFolderTransfer: (hostId: string, user?: string | null) => void;
+  closeFolderTransfer: () => void;
   setScriptsOpen: (open: boolean) => void;
-  openScriptRun: (hostIds: string[], scriptId?: string) => void;
+  openScriptRun: (hostIds: string[], scriptId?: string, user?: string | null) => void;
   closeScriptRun: () => void;
   setSettingsOpen: (open: boolean) => void;
   setBackupsOpen: (open: boolean) => void;
@@ -54,6 +60,17 @@ interface UiState {
   openExport: (hostIds?: string[]) => void;
   closeExport: () => void;
   setImportOpen: (open: boolean) => void;
+  setGroupServers: (on: boolean) => void;
+}
+
+const GROUP_SERVERS_KEY = "ridgessh.groupServers";
+
+function readGroupServers(): boolean {
+  try {
+    return localStorage.getItem(GROUP_SERVERS_KEY) !== "off";
+  } catch {
+    return true;
+  }
 }
 
 /** Pure UI state. Backend data lives in TanStack Query, not here. */
@@ -69,6 +86,7 @@ export const useUiStore = create<UiState>((set) => ({
   configWrite: null,
   historyOpen: false,
   transfer: null,
+  folderTransfer: null,
   scriptsOpen: false,
   scriptRun: null,
   settingsOpen: false,
@@ -76,6 +94,7 @@ export const useUiStore = create<UiState>((set) => ({
   restoreTarget: null,
   exportTarget: null,
   importOpen: false,
+  groupServers: readGroupServers(),
   setView: (view) => set({ view, groupId: null, selectedHostId: null, checkedIds: [] }),
   setGroup: (groupId) => set({ view: "group", groupId, selectedHostId: null, checkedIds: [] }),
   setSearch: (search) => set({ search }),
@@ -94,10 +113,13 @@ export const useUiStore = create<UiState>((set) => ({
   openConfigWrite: (focus) => set({ configWrite: { focus: focus ?? null } }),
   closeConfigWrite: () => set({ configWrite: null }),
   setHistoryOpen: (historyOpen) => set({ historyOpen }),
-  openTransfer: (hostId, direction) => set({ transfer: { hostId, direction } }),
+  openTransfer: (hostId, direction, user = null) => set({ transfer: { hostId, direction, user } }),
   closeTransfer: () => set({ transfer: null }),
+  openFolderTransfer: (hostId, user = null) => set({ folderTransfer: { hostId, user } }),
+  closeFolderTransfer: () => set({ folderTransfer: null }),
   setScriptsOpen: (scriptsOpen) => set({ scriptsOpen }),
-  openScriptRun: (hostIds, scriptId) => set({ scriptRun: { hostIds, scriptId } }),
+  openScriptRun: (hostIds, scriptId, user = null) =>
+    set({ scriptRun: { hostIds, scriptId, user } }),
   closeScriptRun: () => set({ scriptRun: null }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setBackupsOpen: (backupsOpen) => set({ backupsOpen }),
@@ -105,4 +127,12 @@ export const useUiStore = create<UiState>((set) => ({
   openExport: (hostIds) => set({ exportTarget: { hostIds: hostIds ?? null } }),
   closeExport: () => set({ exportTarget: null }),
   setImportOpen: (importOpen) => set({ importOpen }),
+  setGroupServers: (groupServers) => {
+    try {
+      localStorage.setItem(GROUP_SERVERS_KEY, groupServers ? "on" : "off");
+    } catch {
+      // Storage unavailable: the choice lasts for this session.
+    }
+    set({ groupServers });
+  },
 }));

@@ -92,6 +92,7 @@ describe("connecting", () => {
     await waitFor(() =>
       expect(backend.calls.find((c) => c.cmd === "terminal_open_external")?.args).toEqual({
         hostId: "h1",
+        user: null,
       }),
     );
   });

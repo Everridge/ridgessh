@@ -35,6 +35,9 @@ const LABELS: Record<string, string> = {
   retentionDays: "Backup age limit (days)",
   trashRetentionDays: "Trash kept (days)",
   checkUpdates: "Check for updates",
+  terminalTheme: "Terminal colours",
+  terminalFontFamily: "Terminal font",
+  terminalFontSize: "Terminal font size",
 };
 
 export function fieldLabel(field: string): string {

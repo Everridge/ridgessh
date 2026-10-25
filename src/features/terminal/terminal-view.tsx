@@ -5,31 +5,19 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useTheme } from "@/components/theme-provider";
 import { invalidateAll } from "@/features/hosts/queries";
-import { api, errorMessage, type TerminalExit } from "@/lib/ipc";
+import {
+  api,
+  errorMessage,
+  type StepEvent,
+  type TerminalExit,
+  type TerminalOpened,
+} from "@/lib/ipc";
 import { isMac } from "@/lib/platform";
-import { parseProgress, useTerminalStore, type TerminalTab } from "./store";
-
-const DARK: ITheme = {
-  background: "#0a0a0a",
-  foreground: "#e5e5e5",
-  cursor: "#e5e5e5",
-  selectionBackground: "#3b82f680",
-};
-const LIGHT: ITheme = {
-  background: "#ffffff",
-  foreground: "#171717",
-  cursor: "#171717",
-  selectionBackground: "#3b82f640",
-  // Bright white/yellow are unreadable on white; darken them.
-  white: "#737373",
-  brightWhite: "#525252",
-  yellow: "#a16207",
-  brightYellow: "#854d0e",
-};
+import { parseProgress, resumableRun, useTerminalStore, type TerminalTab } from "./store";
+import { useTerminalAppearance } from "./use-terminal-appearance";
 
 const dim = (s: string) => `\x1b[90m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
@@ -41,17 +29,20 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
   const session = useRef<string | null>(null);
   /** Input typed (or terminal replies produced) before the session id is known. */
   const pending = useRef<string[]>([]);
-  const { resolvedTheme } = useTheme();
   const qc = useQueryClient();
+  const appearance = useTerminalAppearance();
+  // Read once when the terminal is created; later changes are applied by the effect below.
+  const initialAppearance = useRef(appearance);
 
   // One xterm instance per tab, kept across reconnects so scrollback survives.
   useEffect(() => {
+    const { scheme, fontFamily, fontSize } = initialAppearance.current;
     const t = new Terminal({
-      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
-      fontSize: 13,
+      fontFamily,
+      fontSize,
       cursorBlink: true,
       scrollback: 10_000,
-      theme: document.documentElement.classList.contains("dark") ? DARK : LIGHT,
+      theme: scheme.theme,
     });
     const f = new FitAddon();
     t.loadAddon(f);
@@ -136,14 +127,20 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
   // A session per generation (first connect and every reconnect).
   useEffect(() => {
     const t = term.current!;
-    const { setStatus, setProgress } = useTerminalStore.getState();
+    const { setStatus, setProgress, setRun, setStep } = useTerminalStore.getState();
     const job = tab.job;
     let disposed = false;
+    // This run's own session. A superseded run (StrictMode's double mount in development, or a
+    // reconnect) must never touch `session.current`, which by then belongs to the next run:
+    // clearing it would drop keystrokes and ConPTY's startup cursor-position reply, leaving
+    // ssh hanging on the connection line.
+    let mine: string | null = null;
     pending.current = [];
 
     const decoder = new TextDecoder();
     const onData = new Channel<ArrayBuffer>();
     onData.onmessage = (buf) => {
+      if (disposed) return;
       const bytes = new Uint8Array(buf);
       t.write(bytes);
       if (job.kind === "transfer") {
@@ -153,31 +150,64 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
     };
     const onExit = new Channel<TerminalExit>();
     onExit.onmessage = ({ exitCode }) => {
-      session.current = null;
       if (disposed) return;
+      if (session.current === mine) session.current = null;
       const code = exitCode ?? "unknown";
       const msg =
         job.kind === "ssh"
           ? `[Session ended, exit code ${code}. Press Enter to reconnect.]`
           : exitCode === 0
             ? "[Finished successfully.]"
-            : `[Failed, exit code ${code}.]`;
+            : job.kind === "folder"
+              ? exitCode === null
+                ? "[Cancelled. Retry continues from the unfinished step.]"
+                : "[Failed. Retry continues from the failed step.]"
+              : `[Failed, exit code ${code}.]`;
       t.write(`\r\n${exitCode === 0 || job.kind === "ssh" ? dim(msg) : red(msg)}\r\n`);
       if (job.kind === "transfer" && exitCode === 0) setProgress(tab.id, 100);
       setStatus(tab.id, "exited", exitCode);
       invalidateAll(qc);
     };
 
+    // Folder transfers: step updates can arrive before the run is known; hold them until then.
+    let stepsReady = false;
+    const early: StepEvent[] = [];
+    const onStep = new Channel<StepEvent>();
+    onStep.onmessage = (e) => {
+      if (disposed) return;
+      if (stepsReady) setStep(tab.id, e.index, e.status, e.detail);
+      else early.push(e);
+    };
+    const current = useTerminalStore.getState().tabs.find((x) => x.id === tab.id);
+    const resume = current ? resumableRun(current) : null;
+
     if (tab.generation > 0)
-      t.write(`\r\n${dim(job.kind === "ssh" ? "[Reconnecting…]" : "[Running again…]")}\r\n`);
-    const start = (cols: number, rows: number) => {
+      t.write(
+        `\r\n${dim(job.kind === "ssh" ? "[Reconnecting…]" : resume ? "[Retrying…]" : "[Running again…]")}\r\n`,
+      );
+    const start = (cols: number, rows: number): Promise<TerminalOpened> => {
       switch (job.kind) {
         case "ssh":
-          return api.terminalOpen(tab.hostId, cols, rows, onData, onExit);
+          return api.terminalOpen(tab.hostId, job.user ?? null, cols, rows, onData, onExit);
         case "transfer":
           return api.transferOpen(job.spec, cols, rows, onData, onExit);
         case "script":
           return api.scriptOpen(job.run, cols, rows, onData, onExit);
+        case "folder":
+          return api
+            .folderOpen(job.spec, resume, cols, rows, onData, onExit, onStep)
+            .then((opened) => {
+              if (!disposed) {
+                setRun(
+                  tab.id,
+                  opened.runId,
+                  opened.steps.map((s) => s.label),
+                );
+                stepsReady = true;
+                for (const e of early.splice(0)) setStep(tab.id, e.index, e.status, e.detail);
+              }
+              return opened;
+            });
       }
     };
     start(t.cols, t.rows)
@@ -186,6 +216,7 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
           void api.terminalClose(sessionId).catch(() => {});
           return;
         }
+        mine = sessionId;
         session.current = sessionId;
         for (const data of pending.current.splice(0)) void api.terminalWrite(sessionId, data);
         setStatus(tab.id, "open");
@@ -202,14 +233,23 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
 
     return () => {
       disposed = true;
-      if (session.current) void api.terminalClose(session.current).catch(() => {});
-      session.current = null;
+      if (mine) void api.terminalClose(mine).catch(() => {});
+      if (session.current === mine) session.current = null;
     };
   }, [tab.id, tab.hostId, tab.job, tab.generation, qc]);
 
+  // Settings or the app theme changed: restyle in place (a new font size changes the grid).
+  const { scheme, fontFamily, fontSize } = appearance;
   useEffect(() => {
-    if (term.current) term.current.options.theme = resolvedTheme === "dark" ? DARK : LIGHT;
-  }, [resolvedTheme]);
+    const t = term.current;
+    if (!t) return;
+    t.options.theme = scheme.theme;
+    if (t.options.fontFamily !== fontFamily || t.options.fontSize !== fontSize) {
+      t.options.fontFamily = fontFamily;
+      t.options.fontSize = fontSize;
+      if (container.current?.offsetParent) fit.current?.fit();
+    }
+  }, [scheme, fontFamily, fontSize]);
 
   // "Stop": end the process; the exit message and output stay in the tab.
   useEffect(() => {
@@ -226,12 +266,16 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
     return () => cancelAnimationFrame(id);
   }, [active]);
 
+  // The fit addon sizes xterm from its parent's computed size, padding included, so the
+  // padding lives on the wrapper and xterm's parent has none (otherwise it overflows, and the
+  // scrollbars that appear make the size flip back and forth).
   return (
     <div
-      ref={container}
-      data-terminal
-      className="h-full w-full bg-white px-2 pt-1 dark:bg-[#0a0a0a]"
+      className="absolute inset-0 overflow-hidden pt-1 pl-2"
+      style={{ background: scheme.theme.background }}
       hidden={!active}
-    />
+    >
+      <div ref={container} data-terminal className="h-full w-full overflow-hidden" />
+    </div>
   );
 }

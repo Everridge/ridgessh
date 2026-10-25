@@ -40,12 +40,14 @@ pub(crate) fn live_host(state: &AppState, host_id: &str) -> AppResult<hosts::Hos
     Ok(host)
 }
 
-/// Opens an embedded ssh session to `host_id`.
+/// Opens an embedded ssh session to `host_id`, as `user@alias` when `user` is given.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // the IPC argument list
 pub fn terminal_open(
     app: AppHandle,
     state: State<'_, AppState>,
     host_id: String,
+    user: Option<String>,
     cols: u16,
     rows: u16,
     on_data: Channel,
@@ -53,7 +55,7 @@ pub fn terminal_open(
 ) -> AppResult<TerminalOpened> {
     let host = live_host(&state, &host_id)?;
     let ssh = find_tool("ssh")?;
-    let args = target_args(&host)?;
+    let args = target_args(&host, user.as_deref())?;
     let command = display_command(&args);
     let job = Job {
         host: &host,
@@ -147,10 +149,14 @@ pub fn terminal_close(state: State<'_, AppState>, session_id: String) -> AppResu
 
 /// Opens the host in a separate console window instead of the embedded terminal.
 #[tauri::command]
-pub fn terminal_open_external(state: State<'_, AppState>, host_id: String) -> AppResult<()> {
+pub fn terminal_open_external(
+    state: State<'_, AppState>,
+    host_id: String,
+    user: Option<String>,
+) -> AppResult<()> {
     let host = live_host(&state, &host_id)?;
     let ssh = find_tool("ssh")?;
-    let args = target_args(&host)?;
+    let args = target_args(&host, user.as_deref())?;
     terminal::open_external(&ssh, &args)?;
     let command = display_command(&args);
     state.db.tx(|tx| {

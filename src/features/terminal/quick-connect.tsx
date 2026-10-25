@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { ClockIcon, ServerIcon, StarIcon } from "lucide-react";
+import { ClockIcon, KeyRoundIcon, ServerIcon, StarIcon } from "lucide-react";
 import {
   Command,
   CommandDialog,
@@ -12,7 +12,13 @@ import {
 } from "@/components/ui/command";
 import { groupPath } from "@/features/hosts/filter";
 import { connectionLabel } from "@/features/hosts/format";
-import { useGroupsData, useHostsData } from "@/features/hosts/queries";
+import {
+  configAlias,
+  useGroupsData,
+  useHostsData,
+  useVariants,
+  variantsFor,
+} from "@/features/hosts/queries";
 import type { Group, Host } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
 import { useConnect } from "./use-connect";
@@ -23,8 +29,9 @@ export function QuickConnect() {
   const hosts = useHostsData();
   const groups = useGroupsData();
   const { connect } = useConnect();
+  const allVariants = useVariants();
 
-  const { favorites, recent, rest } = useMemo(() => {
+  const { favorites, recent, rest, users } = useMemo(() => {
     const live = hosts.filter((h) => h.deletedAt === null);
     const recent = live
       .filter((h) => h.lastConnectedAt && !h.favorite)
@@ -35,8 +42,9 @@ export function QuickConnect() {
       favorites: live.filter((h) => h.favorite),
       recent,
       rest: live.filter((h) => !h.favorite && !shown.has(h.id)),
+      users: live.flatMap((h) => variantsFor(h, allVariants).map((v) => ({ host: h, variant: v }))),
     };
-  }, [hosts]);
+  }, [hosts, allVariants]);
 
   const pick = (h: Host) => {
     setOpen(false);
@@ -75,6 +83,28 @@ export function QuickConnect() {
             groups={groups}
             onPick={pick}
           />
+          {users.length > 0 && (
+            <CommandGroup heading="Users (Match blocks)">
+              {users.map(({ host, variant }) => {
+                const target = `${variant.user}@${configAlias(host)}`;
+                return (
+                  <CommandItem
+                    key={`${host.id}:${variant.user}`}
+                    value={`${target} ${host.id}`}
+                    keywords={[host.alias, host.hostname ?? "", variant.identityFile ?? ""]}
+                    onSelect={() => {
+                      setOpen(false);
+                      connect(host, variant.user);
+                    }}
+                  >
+                    <KeyRoundIcon />
+                    <span className="font-medium">{target}</span>
+                    <span className="truncate text-muted-foreground">{host.hostname}</span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          )}
         </CommandList>
       </Command>
     </CommandDialog>

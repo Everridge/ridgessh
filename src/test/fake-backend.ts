@@ -25,6 +25,7 @@ import type {
   Settings,
   SettingsView,
   SyncReport,
+  UserVariant,
 } from "@/lib/ipc";
 
 /**
@@ -52,6 +53,8 @@ export interface FakeSeed {
   /** What `import_preview` shows, and the password an export source needs. */
   importPreview?: ImportPreview;
   importPassword?: string;
+  /** Per-user Match blocks of the config. */
+  variants?: UserVariant[];
 }
 
 export function installFakeBackend(seed: FakeSeed = {}) {
@@ -74,6 +77,9 @@ export function installFakeBackend(seed: FakeSeed = {}) {
     retentionDays: 0,
     trashRetentionDays: 30,
     checkUpdates: true,
+    terminalTheme: "auto",
+    terminalFontFamily: null,
+    terminalFontSize: 13,
     ...seed.settings,
   };
   let remembered: string | null = seed.rememberedPassword ?? null;
@@ -315,6 +321,10 @@ export function installFakeBackend(seed: FakeSeed = {}) {
         return [];
       case "terminal_open_external":
         return null;
+      case "folder_last":
+        return { remote: seed.lastRemote ?? null, local: null };
+      case "config_variants":
+        return seed.variants ?? [];
       case "host_activity":
         return [];
       case "sync_run":

@@ -21,9 +21,26 @@ pub fn validate_alias(alias: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Validates a remote user name used as `user@alias`: the same rules as an alias, and no `@`.
+pub fn validate_user(user: &str) -> AppResult<()> {
+    if user.contains('@') || validate_alias(user).is_err() {
+        return Err(AppError::Validation(format!("invalid user name: {user:?}")));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_names() {
+        assert!(validate_user("tom").is_ok());
+        assert!(validate_user("deploy.bot").is_ok());
+        for u in ["", "-l", "a@b", "a b", "ro*t", "!x"] {
+            assert!(validate_user(u).is_err(), "{u:?}");
+        }
+    }
 
     #[test]
     fn accepts_normal_aliases() {

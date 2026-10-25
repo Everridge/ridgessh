@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use crate::db::hosts::{Connection, Directive};
 use crate::error::{AppError, AppResult};
-use crate::security::validate_alias;
+use crate::security::{validate_alias, validate_user};
 use lexer::{Line, LineKind, split_args, unquote};
 
 /// OpenSSH refuses to nest includes deeper than this.
@@ -187,6 +187,42 @@ pub struct RuleBlock {
     pub directive_count: usize,
 }
 
+/// A `Match originalhost <alias> user <name>` block (criteria in either order): the settings
+/// for one user of a managed host, typically its own `IdentityFile`. It applies when
+/// connecting as `ssh name@alias`, so that is how RidgeSSH connects to it. Read-only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserVariant {
+    pub alias: String,
+    pub user: String,
+    /// The block's first `IdentityFile`, if any.
+    pub identity_file: Option<String>,
+    /// Every directive of the block, for display.
+    pub options: Vec<Directive>,
+    pub source: PathBuf,
+    /// 1-based line of the `Match` header.
+    pub line: usize,
+}
+
+/// `originalhost X user Y` or `user Y originalhost X`, with a concrete alias and user name.
+/// `host` is not accepted: it matches the name after `HostName`, not what was typed.
+pub fn user_variant_criteria(criteria: &str) -> Option<(String, String)> {
+    let args = split_args(criteria);
+    if args.len() != 4 {
+        return None;
+    }
+    let (mut host, mut user) = (None, None);
+    for pair in args.chunks(2) {
+        match pair[0].to_ascii_lowercase().as_str() {
+            "originalhost" if host.is_none() => host = Some(pair[1].clone()),
+            "user" if user.is_none() => user = Some(pair[1].clone()),
+            _ => return None,
+        }
+    }
+    let (host, user) = (host?, user?);
+    (is_concrete_alias(&host) && validate_user(&user).is_ok()).then_some((host, user))
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedConfig {
@@ -194,6 +230,8 @@ pub struct ParsedConfig {
     pub files: Vec<ConfigFile>,
     pub hosts: Vec<ConfigHost>,
     pub rules: Vec<RuleBlock>,
+    /// Per-user `Match` blocks of managed hosts (also listed in `rules`).
+    pub variants: Vec<UserVariant>,
     pub warnings: Vec<String>,
 }
 
@@ -327,7 +365,33 @@ fn collect_block(file: &ConfigFile, block: &Block, out: &mut ParsedConfig) {
     };
     match &block.kind {
         BlockKind::Preamble => {}
-        BlockKind::Match { criteria } => out.rules.push(rule("match", criteria.clone())),
+        BlockKind::Match { criteria } => {
+            out.rules.push(rule("match", criteria.clone()));
+            if let Some((alias, user)) = user_variant_criteria(criteria) {
+                let options: Vec<Directive> = file
+                    .directives(block)
+                    .filter_map(|l| match &l.kind {
+                        LineKind::Directive { key, value } => Some(Directive {
+                            key: key.clone(),
+                            value: value.clone(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+                let identity_file = options
+                    .iter()
+                    .find(|d| d.key.eq_ignore_ascii_case("identityfile"))
+                    .map(|d| unquote(&d.value));
+                out.variants.push(UserVariant {
+                    alias,
+                    user,
+                    identity_file,
+                    options,
+                    source: file.path.clone(),
+                    line: block.start + 1,
+                });
+            }
+        }
         BlockKind::Host { patterns } => {
             let header = file.lines[block.start].value().unwrap_or("").to_string();
             if patterns.len() != 1 || !is_concrete_alias(&patterns[0]) {

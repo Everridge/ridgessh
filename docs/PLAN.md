@@ -161,6 +161,37 @@ DB-side edits to connection fields mark the host as having **pending config chan
 - Run on one host or a multi-selection (sequential first, parallel later). Confirmation dialog listing target hosts before running.
 - CRLF → LF normalization before sending (common Windows pitfall).
 
+## 8a. Folder transfers (M11)
+
+Moving whole folders: remote → this PC, this PC → remote, and remote → remote via this PC. A transfer is a **recipe**: a source, a destination and an ordered list of steps, each of which can be switched on or off. It runs in a terminal tab like scp does, so password and host-key prompts still work, and a strip above the output shows the status of each step.
+
+| #   | Step              | Where                | Default                                                                                                                                          |
+| --- | ----------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Run script before | source               | off (a library script or a command)                                                                                                              |
+| 2   | Check             | source + destination | on: the folder exists, its size (`du`), free space (`df`, local disk), and whether `zip`/`unzip` or the `python3` fallback is available          |
+| 3   | Pack              | source               | on: `zip -r -y` (keeps permissions and symlinks) into `/tmp/ridgessh-<id>.zip`, paths relative to the folder's parent; excludes; optional `sudo` |
+| 4   | Download          | source → PC          | on: scp, then compare SHA-256 checksums of both copies                                                                                           |
+| 5   | Unpack locally    | PC                   | off: `tar -xf` (bsdtar reads zip on Windows 10+ and macOS)                                                                                       |
+| 6   | Upload            | PC → destination     | on when the destination is remote                                                                                                                |
+| 7   | Unpack            | destination          | on: `unzip -o`. If the target exists, rename it to `name.bak-<date>` first (default), merge, or stop                                             |
+| 8   | Set owner         | destination          | off: `chown -R user:group` with `sudo` (zip does not keep owners)                                                                                |
+| 9   | Run script after  | destination          | off                                                                                                                                              |
+| 10  | Clean up          | everywhere           | on: deletes this run's temporary archives (only `/tmp/ridgessh-*.zip` it created); the local copy is kept when asked                             |
+
+- **Zip, not tar**: opens natively on Windows, macOS and Linux. Missing `zip`/`unzip` on a server is found by Check; the fallback is `python3 -m zipfile`, or installing the package after asking.
+- **Execution**: the backend runs the steps in order, each as its own ssh/scp process feeding the same tab. A step reports results (sizes, checksums) as marker lines in its output, so prompts keep working. A failed step stops the run; **Retry** continues from the failed step, keeping what already succeeded. Each run is recorded in the activity log.
+- **Safety**: all paths are quoted before they go into a remote command. Temporary files exist only under `/tmp/ridgessh-*`. A preview lists each step's exact command, and overwriting asks for confirmation. The ssh config is never touched.
+- Windows OpenSSH cannot reuse connections (no `ControlMaster`), so password hosts are asked once per step. Key-based hosts are not affected.
+
+Phases:
+
+1. **Remote → PC**: check, pack, download with checksum, optional unpack locally, clean up.
+2. **PC → remote and remote → PC → remote**: upload, unpack with backup of the existing folder, set owner.
+3. **Scripts before and after, `sudo`, excludes, saved recipes** (a Recipes list with run history; steps editable per run), and a remote folder browser.
+4. **Optional direct streaming between servers** (`ssh A "zip -" | ssh B "…"` through the app): no local disk use, but no resume.
+
+**As built (M11 phase 1)**: "Download folder as zip…" is in the host and user-row context menus and in the details panel. It runs Check → Zip on server → Download → (Unpack locally) → Clean up in one tab. The backend runner (`folder/runner.rs`) starts each step as its own PTY process behind a terminal route. A route is a stable session id that sends input to whichever process is current and holds input that arrives between processes. A step strip above the tab shows each step's status. Remote scripts get their arguments as quoted positional parameters and report problems through exit codes (10: folder not found, 11: no packer, 12: no space, 13: no access, 18: some files unreadable, which is a warning). The archive in `/tmp` is created with `umask 077`. Its checksum, size and folder name travel in a `.sum` file that is downloaded first, and the local disk's free space is checked before the archive itself is downloaded. The archive is downloaded as `.part` and renamed only after the size and SHA-256 match. Unpacking uses the system `tar` (bsdtar), after moving an existing folder to `name.bak-<date>`. A failed or cancelled run is kept in memory, and **Retry** continues from the step that did not finish. Clean-up deletes only `/tmp/ridgessh-<12 hex>.zip` and its `.sum`.
+
 ## 9. Backups
 
 **Bundle** (`.rsbak`): zip containing
@@ -241,6 +272,7 @@ shadcn pieces: Sidebar, Resizable, DataTable, Dialog/Sheet, Command (Ctrl+K), Ta
 | M8  | Export / import      | selective encrypted export, import preview + merge strategies, plain config import                               |
 | M9  | Release (Windows)    | NSIS installer, single-instance, window state, updater, code signing                                             |
 | M10 | macOS                | keychain, `0600` perms, `/usr/bin/ssh`, notarization                                                             |
+| M11 | Folder transfers     | zip recipes: check, pack, download/upload, unpack, scripts, saved recipes (see §8a)                              |
 
 **As built (M9)**: a per-user NSIS installer (no admin rights; downloads WebView2 if it is missing). The updater plugin reads `latest.json` from the latest published GitHub release and checks its minisign signature. The public key is in `tauri.conf.json`; the private key and its password are kept outside the repo and stored as CI secrets. The app checks once on startup (there is a setting to turn this off) and again whenever the user clicks "Check now" in Settings → About. The update dialog shows the release notes and warns when terminal sessions are open. The NSIS installer then runs in passive mode and the app restarts. Before a newer schema is applied, the database is copied to `db.v<N>.bak`, and a database from a newer version is refused instead of being opened. Releases: `pnpm version:bump X.Y.Z` → `CHANGELOG.md` section → tag `vX.Y.Z` → the `release.yml` workflow builds the installer and creates a draft release. The draft becomes visible to the updater once it is published. Authenticode signing uses Azure Trusted Signing; it is switched on by repository variables and secrets, and builds are unsigned until those are set.
 

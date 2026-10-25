@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api, errorMessage, type GroupInput, type HostInput } from "@/lib/ipc";
+import {
+  api,
+  errorMessage,
+  type GroupInput,
+  type Host,
+  type HostInput,
+  type UserVariant,
+} from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
 
 export const keys = {
@@ -15,6 +22,7 @@ export const keys = {
   settings: ["settings"] as const,
   backupStatus: ["backup-status"] as const,
   backups: ["backups"] as const,
+  variants: ["config-variants"] as const,
 };
 
 /** Refreshes everything derived from hosts after any change. */
@@ -26,6 +34,7 @@ export function invalidateAll(qc: QueryClient) {
     keys.renames,
     keys.configCandidates,
     keys.configPreview,
+    keys.variants,
     // Edits can trigger automatic backups.
     keys.backupStatus,
     keys.backups,
@@ -45,6 +54,21 @@ export const useGroups = () => useQuery({ queryKey: keys.groups, queryFn: api.gr
 export const useTags = () => useQuery({ queryKey: keys.tags, queryFn: api.tagsList });
 
 export const useHostsData = () => useHosts().data ?? EMPTY;
+
+const NO_VARIANTS: UserVariant[] = [];
+/** Per-user `Match` blocks of the live config (read-only). */
+export const useVariants = () =>
+  useQuery({ queryKey: keys.variants, queryFn: api.configVariants }).data ?? NO_VARIANTS;
+
+/** The config alias a host's `Match originalhost` blocks name. */
+export const configAlias = (host: Pick<Host, "alias" | "configSnapshot">) =>
+  host.configSnapshot?.alias ?? host.alias;
+
+/** The user variants of `host`, by user name. */
+export function variantsFor(host: Pick<Host, "alias" | "configSnapshot">, all: UserVariant[]) {
+  const alias = configAlias(host);
+  return all.filter((v) => v.alias === alias).sort((a, b) => a.user.localeCompare(b.user));
+}
 export const useGroupsData = () => useGroups().data ?? EMPTY;
 export const useTagsData = () => useTags().data ?? EMPTY;
 export const useHostHistory = (id: string) =>

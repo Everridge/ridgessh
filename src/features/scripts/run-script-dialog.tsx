@@ -23,7 +23,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { connectionLabel } from "@/features/hosts/format";
-import { useHostsData } from "@/features/hosts/queries";
+import { useHostsData, useVariants, variantsFor } from "@/features/hosts/queries";
+import { UserSelect } from "@/features/hosts/user-select";
 import { useTerminalStore } from "@/features/terminal/store";
 import { api, errorMessage, type RunMode, type ScriptRun } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
@@ -38,7 +39,12 @@ export function RunScriptDialog() {
     <Dialog open={target !== null} onOpenChange={(o) => !o && close()}>
       <DialogContent className="flex max-h-[85vh] flex-col gap-3 sm:max-w-2xl">
         {target && (
-          <Body initialHosts={target.hostIds} initialScript={target.scriptId} onDone={close} />
+          <Body
+            initialHosts={target.hostIds}
+            initialScript={target.scriptId}
+            initialUser={target.user ?? null}
+            onDone={close}
+          />
         )}
       </DialogContent>
     </Dialog>
@@ -48,12 +54,16 @@ export function RunScriptDialog() {
 function Body({
   initialHosts,
   initialScript,
+  initialUser,
   onDone,
 }: {
   initialHosts: string[];
   initialScript?: string;
+  initialUser: string | null;
   onDone: () => void;
 }) {
+  const variants = useVariants();
+  const [user, setUser] = useState(initialUser);
   const scripts = useScripts().data ?? [];
   const hosts = useHostsData().filter((h) => !h.deletedAt);
   const [scriptId, setScriptId] = useState<string | undefined>(initialScript);
@@ -73,6 +83,13 @@ function Body({
     ? hosts.filter((h) => `${h.alias} ${connectionLabel(h)}`.toLowerCase().includes(q))
     : hosts;
   const name = local?.name ?? script?.name;
+  // Users with a per-user Match block on any chosen host.
+  const users = [
+    ...new Set(chosen.flatMap((h) => variantsFor(h, variants).map((v) => v.user))),
+  ].sort();
+  const withoutBlock = user
+    ? chosen.filter((h) => !variantsFor(h, variants).some((v) => v.user === user)).length
+    : 0;
   const ready = !!name && chosen.length > 0;
 
   const pickLocal = async () => {
@@ -102,7 +119,9 @@ function Body({
             args: effectiveArgs,
           }
         : { hostId: h.id, scriptId, mode: effectiveMode, args: effectiveArgs };
-      store.openJob(h, { kind: "script", run: spec }, `▶ ${name} · ${h.alias}`);
+      spec.user = user;
+      const target = user ? `${user}@${h.alias}` : h.alias;
+      store.openJob(h, { kind: "script", run: spec }, `▶ ${name} · ${target}`);
     }
     onDone();
   };
@@ -183,6 +202,22 @@ function Body({
             placeholder={`Quoted like a shell command line, e.g. --env "staging eu"`}
           />
         </div>
+        {(users.length > 0 || user) && (
+          <div className="grid gap-1 sm:col-span-2">
+            <UserSelect
+              users={user && !users.includes(user) ? [...users, user] : users}
+              value={user}
+              onChange={setUser}
+              defaultLabel="Each host's own user (Host block)"
+            />
+            {withoutBlock > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {withoutBlock} of the chosen hosts {withoutBlock === 1 ? "has" : "have"} no Match
+                block for {user}; they are still connected to as {user}@alias.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-1.5">

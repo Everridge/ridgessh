@@ -132,6 +132,16 @@ export interface RuleBlock {
   directiveCount: number;
 }
 
+/** A `Match originalhost <alias> user <name>` block: one user of a host, with its own key. */
+export interface UserVariant {
+  alias: string;
+  user: string;
+  identityFile: string | null;
+  options: Directive[];
+  source: string;
+  line: number;
+}
+
 export interface SyncReport {
   scannedAt: string;
   configPath: string;
@@ -243,6 +253,11 @@ export interface Settings {
   trashRetentionDays: number;
   /** Look for a new release on startup. */
   checkUpdates: boolean;
+  /** Terminal colour scheme id ("auto" follows the app's light/dark mode). */
+  terminalTheme: string;
+  /** null = the platform's default monospace font. */
+  terminalFontFamily: string | null;
+  terminalFontSize: number;
 }
 
 export interface SettingsView {
@@ -312,6 +327,8 @@ export interface TransferSpec {
   local: string[];
   remote: string;
   recursive: boolean;
+  /** Connect as this user (`user@alias`). */
+  user?: string | null;
 }
 
 export type RunMode = "stream" | "copy";
@@ -342,11 +359,39 @@ export interface ScriptRun {
   interpreter?: string | null;
   mode?: RunMode | null;
   args: string;
+  /** Connect as this user (`user@alias`). */
+  user?: string | null;
 }
 
 export interface TerminalOpened {
   sessionId: string;
   command: string;
+}
+
+/** A remote folder zipped on the server and downloaded to this PC. */
+export interface FolderSpec {
+  hostId: string;
+  /** Connect as this user (`user@alias`). */
+  user?: string | null;
+  remotePath: string;
+  localDir: string;
+  unpack: boolean;
+  keepZip: boolean;
+}
+
+export type StepKind = "check" | "pack" | "download" | "unpack" | "cleanup";
+export type StepStatus = "pending" | "running" | "done" | "warning" | "failed" | "skipped";
+
+export interface FolderOpened extends TerminalOpened {
+  /** Pass back as `resume` to retry from the failed step. */
+  runId: string;
+  steps: { kind: StepKind; label: string }[];
+}
+
+export interface StepEvent {
+  index: number;
+  status: Exclude<StepStatus, "pending">;
+  detail: string | null;
 }
 
 export interface TerminalExit {
@@ -513,17 +558,20 @@ export const api = {
 
   terminalOpen: (
     hostId: string,
+    user: string | null,
     cols: number,
     rows: number,
     onData: Channel<ArrayBuffer>,
     onExit: Channel<TerminalExit>,
-  ) => invoke<TerminalOpened>("terminal_open", { hostId, cols, rows, onData, onExit }),
+  ) => invoke<TerminalOpened>("terminal_open", { hostId, user, cols, rows, onData, onExit }),
   terminalWrite: (sessionId: string, data: string) =>
     invoke<void>("terminal_write", { sessionId, data }),
   terminalResize: (sessionId: string, cols: number, rows: number) =>
     invoke<void>("terminal_resize", { sessionId, cols, rows }),
   terminalClose: (sessionId: string) => invoke<void>("terminal_close", { sessionId }),
-  terminalOpenExternal: (hostId: string) => invoke<void>("terminal_open_external", { hostId }),
+  terminalOpenExternal: (hostId: string, user: string | null = null) =>
+    invoke<void>("terminal_open_external", { hostId, user }),
+  configVariants: () => invoke<UserVariant[]>("config_variants"),
   transferOpen: (
     spec: TransferSpec,
     cols: number,
@@ -544,6 +592,17 @@ export const api = {
     onData: Channel<ArrayBuffer>,
     onExit: Channel<TerminalExit>,
   ) => invoke<TerminalOpened>("script_open", { run, cols, rows, onData, onExit }),
+  folderOpen: (
+    spec: FolderSpec,
+    resume: string | null,
+    cols: number,
+    rows: number,
+    onData: Channel<ArrayBuffer>,
+    onExit: Channel<TerminalExit>,
+    onStep: Channel<StepEvent>,
+  ) => invoke<FolderOpened>("folder_open", { spec, resume, cols, rows, onData, onExit, onStep }),
+  folderLast: (hostId: string) =>
+    invoke<{ remote: string | null; local: string | null }>("folder_last", { hostId }),
   exportCreate: (path: string, password: string, selection: ExportSelection) =>
     invoke<ExportSummary>("export_create", { path, password, selection }),
   /** Plain, unencrypted ssh_config text with the hosts' connection values. */

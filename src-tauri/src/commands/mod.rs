@@ -3,6 +3,7 @@
 pub mod app;
 pub mod backup;
 pub mod config;
+pub mod folder;
 pub mod groups;
 pub mod history;
 pub mod hosts;

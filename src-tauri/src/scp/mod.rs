@@ -31,6 +31,9 @@ pub struct TransferSpec {
     /// Copy folders (`-r`). Always on for uploads that include a folder.
     #[serde(default)]
     pub recursive: bool,
+    /// Connect as this user (`user@alias`, see `target_args`).
+    #[serde(default)]
+    pub user: Option<String>,
 }
 
 fn check_remote(remote: &str) -> AppResult<&str> {
@@ -54,7 +57,7 @@ fn absolute(p: &str) -> AppResult<PathBuf> {
 /// The scp argument vector for `spec` (no shell is involved).
 pub fn scp_args(host: &Host, spec: &TransferSpec) -> AppResult<Vec<String>> {
     let remote = check_remote(&spec.remote)?;
-    let (mut args, destination) = host_options(host)?;
+    let (mut args, destination) = host_options(host, spec.user.as_deref())?;
     let target = format!("{destination}:{remote}");
     match spec.direction {
         Direction::Upload => {
@@ -139,6 +142,7 @@ mod tests {
             local: vec![file.display().to_string(), dir.path().display().to_string()],
             remote: " /srv/my app/ ".into(),
             recursive: false,
+            user: None,
         };
         let args = scp_args(&h, &up).unwrap();
         assert_eq!(
@@ -178,6 +182,7 @@ mod tests {
             local,
             remote: remote.into(),
             recursive: false,
+            user: None,
         };
         assert!(scp_args(&h, &spec(vec![], "/tmp", Direction::Upload)).is_err());
         assert!(

@@ -81,6 +81,8 @@ export interface HostFilter {
   view: HostView;
   groupId: string | null;
   search: string;
+  /** More searchable text per host (its per-user Match blocks). */
+  extraText?: (h: Host) => string;
 }
 
 /** Applies the sidebar view and the search box. Every search word must match. */
@@ -106,7 +108,7 @@ export function filterHosts(hosts: Host[], groups: Group[], f: HostFilter): Host
   const words = f.search.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length) {
     out = out.filter((h) => {
-      const text = searchText(h, groups);
+      const text = searchText(h, groups) + (f.extraText?.(h).toLowerCase() ?? "");
       return words.every((w) => text.includes(w));
     });
   }
@@ -132,4 +134,61 @@ export function countByGroup(hosts: Host[], groups: Group[]): Map<string, number
     }
   }
   return counts;
+}
+
+/** A list entry: a host on its own, or several hosts that point at the same server. */
+export type ListEntry =
+  | { kind: "host"; host: Host }
+  | { kind: "server"; key: string; name: string; address: string; hosts: Host[] };
+
+/** `hostname:port` (lowercased, port 22 implied); hosts without a hostname never share one. */
+export function serverKey(h: Host): string | null {
+  const name = h.hostname?.trim().toLowerCase();
+  return name ? `${name}:${h.port ?? 22}` : null;
+}
+
+/** The aliases' common prefix without trailing separators ("acme_prod" for acme_prod_root…). */
+function commonName(aliases: string[]): string | null {
+  let prefix = aliases[0] ?? "";
+  for (const a of aliases.slice(1)) {
+    let i = 0;
+    while (i < prefix.length && i < a.length && prefix[i] === a[i]) i++;
+    prefix = prefix.slice(0, i);
+  }
+  prefix = prefix.replace(/[-_.\s]+$/, "");
+  return prefix.length >= 3 ? prefix : null;
+}
+
+/**
+ * Nests hosts that share a server (same hostname and port, e.g. `acme_prod_root` and
+ * `acme_prod_deploy`) under one entry, placed where its first host was. Order is kept.
+ */
+export function groupByServer(hosts: Host[]): ListEntry[] {
+  const byKey = new Map<string, Host[]>();
+  for (const h of hosts) {
+    const key = serverKey(h);
+    if (key) byKey.set(key, [...(byKey.get(key) ?? []), h]);
+  }
+  const out: ListEntry[] = [];
+  const placed = new Set<string>();
+  for (const h of hosts) {
+    const key = serverKey(h);
+    const members = key ? byKey.get(key)! : [];
+    if (!key || members.length < 2) {
+      out.push({ kind: "host", host: h });
+      continue;
+    }
+    if (placed.has(key)) continue;
+    placed.add(key);
+    const port = h.port && h.port !== 22 ? `:${h.port}` : "";
+    const address = `${h.hostname!.trim()}${port}`;
+    out.push({
+      kind: "server",
+      key,
+      name: commonName(members.map((m) => m.alias)) ?? address,
+      address,
+      hosts: members,
+    });
+  }
+  return out;
 }

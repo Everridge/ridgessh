@@ -256,3 +256,53 @@ fn real_config_round_trips() {
         println!("warning: {}", w.split(':').next().unwrap_or(""));
     }
 }
+
+#[test]
+fn per_user_match_blocks_become_variants() {
+    let p = parse(
+        "Host devbox\n    HostName 203.0.113.10\n    IdentitiesOnly yes\n\n\
+         Match originalhost devbox user deploy\n    IdentityFile \"C:\\keys\\dev deploy\"\n\n\
+         Match user tom originalhost devbox\n    IdentityFile c:\\keys\\devbox\n    ForwardAgent yes\n\n\
+         Match host devbox user root\n    IdentityFile x\n\
+         Match originalhost devbox user tom exec \"true\"\n    IdentityFile y\n\
+         Match originalhost dev* user root\n    IdentityFile z\n",
+    );
+    let v: Vec<_> = p
+        .variants
+        .iter()
+        .map(|v| {
+            (
+                v.alias.as_str(),
+                v.user.as_str(),
+                v.identity_file.as_deref(),
+                v.options.len(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        v,
+        [
+            ("devbox", "deploy", Some(r"C:\keys\dev deploy"), 1),
+            ("devbox", "tom", Some(r"c:\keys\devbox"), 2),
+        ]
+    );
+    assert_eq!(p.variants[1].line, 8);
+    // Still listed as read-only rules, and the file is untouched.
+    assert_eq!(p.rules.len(), 5);
+}
+
+/// Lists the per-user Match blocks of the developer's real config (read-only).
+#[test]
+#[ignore = "reads ~/.ssh/config"]
+fn real_config_variants() {
+    let path = dirs::home_dir().unwrap().join(".ssh").join("config");
+    let p = super::load(&path).unwrap();
+    for v in &p.variants {
+        let managed = p.hosts.iter().any(|h| h.alias == v.alias);
+        println!(
+            "{}@{} key={:?} managed={managed}",
+            v.user, v.alias, v.identity_file
+        );
+    }
+    println!("{} variants, {} rules", p.variants.len(), p.rules.len());
+}

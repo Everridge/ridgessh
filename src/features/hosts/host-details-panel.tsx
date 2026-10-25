@@ -2,6 +2,7 @@ import {
   ArrowUpDownIcon,
   ExternalLinkIcon,
   FileCodeIcon,
+  FolderDownIcon,
   MousePointerClickIcon,
   PencilIcon,
   PlayIcon,
@@ -25,7 +26,14 @@ import { groupPath } from "./filter";
 import { connectionLabel, formatTs } from "./format";
 import { useHostActions, usePurgeConfirm } from "./host-actions";
 import { SyncBadges } from "./host-badges";
-import { useGroupsData, useHostsData, useSetFavorite } from "./queries";
+import {
+  configAlias,
+  useGroupsData,
+  useHostsData,
+  useSetFavorite,
+  useVariants,
+  variantsFor,
+} from "./queries";
 
 const NEEDS_REVIEW = new Set(["conflict", "config_only_new", "removed_from_config"]);
 
@@ -58,6 +66,7 @@ function Details({ host }: { host: Host }) {
   const purge = usePurgeConfirm();
   const { connect, connectExternal } = useConnect();
   const trashed = host.deletedAt !== null;
+  const variants = variantsFor(host, useVariants());
 
   return (
     <section className="flex h-full min-w-0 flex-col">
@@ -100,6 +109,15 @@ function Details({ host }: { host: Host }) {
                 onClick={() => useUiStore.getState().openTransfer(host.id, "upload")}
               >
                 <ArrowUpDownIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Download folder as zip"
+                title="Download folder as zip"
+                onClick={() => useUiStore.getState().openFolderTransfer(host.id)}
+              >
+                <FolderDownIcon />
               </Button>
               <Button
                 variant="ghost"
@@ -194,6 +212,50 @@ function Details({ host }: { host: Host }) {
                   </Row>
                 ))}
               </Section>
+
+              {variants.length > 0 && !trashed && (
+                <div className="grid gap-1.5">
+                  <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Users (Match blocks)
+                  </h3>
+                  <ul className="grid gap-1" aria-label="Users">
+                    {variants.map((v) => (
+                      <li key={v.user} className="flex items-start gap-2 text-sm">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-mono text-xs">
+                            {v.user}@{configAlias(host)}
+                          </div>
+                          <div className="truncate font-mono text-xs text-muted-foreground">
+                            {v.options.map((o) => `${o.key} ${o.value}`).join(" · ") ||
+                              "No options"}
+                          </div>
+                        </div>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          aria-label={`Connect as ${v.user}`}
+                          onClick={() => connect(host, v.user)}
+                        >
+                          <SquareTerminalIcon /> Connect
+                        </Button>
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-label={`Open as ${v.user} in external terminal`}
+                          title="Open in external terminal"
+                          onClick={() => connectExternal(host, v.user)}
+                        >
+                          <ExternalLinkIcon />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-muted-foreground">
+                    Read from ~/.ssh/config. Connecting runs ssh user@{configAlias(host)}, so
+                    OpenSSH applies the matching block.
+                  </p>
+                </div>
+              )}
 
               {host.fields.length > 0 && (
                 <Section title="Custom fields">

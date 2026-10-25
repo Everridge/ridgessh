@@ -1,7 +1,14 @@
 import {
   ArrowDownToLineIcon,
   ArrowUpFromLineIcon,
+  ChevronRightIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleIcon,
+  CircleXIcon,
   FileCode2Icon,
+  FolderDownIcon,
+  LoaderCircleIcon,
   PlusIcon,
   RotateCwIcon,
   SquareIcon,
@@ -12,7 +19,14 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/ui";
-import { useTerminalStore, type TabStatus, type TerminalTab } from "./store";
+import type { StepStatus } from "@/lib/ipc";
+import {
+  resumableRun,
+  useTerminalStore,
+  type FolderStep,
+  type TabStatus,
+  type TerminalTab,
+} from "./store";
 import { TerminalView } from "./terminal-view";
 import { platform } from "@/lib/platform";
 
@@ -84,7 +98,8 @@ export function TerminalPanel() {
         )}
         {active && (active.status === "exited" || active.status === "error") && (
           <Button variant="ghost" size="xs" onClick={() => reconnect(active.id)}>
-            <RotateCwIcon /> {active.job.kind === "ssh" ? "Reconnect" : "Run again"}
+            <RotateCwIcon />{" "}
+            {active.job.kind === "ssh" ? "Reconnect" : resumableRun(active) ? "Retry" : "Run again"}
           </Button>
         )}
         <Tooltip>
@@ -102,7 +117,8 @@ export function TerminalPanel() {
         </Tooltip>
       </div>
 
-      <div className="relative min-h-0 flex-1">
+      {active?.run && <StepStrip steps={active.run.steps} />}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {tabs.length === 0 ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <SquareTerminalIcon className="size-4" />
@@ -116,8 +132,59 @@ export function TerminalPanel() {
   );
 }
 
+const STEP_ICON: Record<StepStatus, React.ComponentType<{ className?: string }>> = {
+  pending: CircleIcon,
+  running: LoaderCircleIcon,
+  done: CircleCheckIcon,
+  warning: CircleAlertIcon,
+  failed: CircleXIcon,
+  skipped: CircleCheckIcon,
+};
+
+const STEP_COLOR: Record<StepStatus, string> = {
+  pending: "text-muted-foreground",
+  running: "text-foreground animate-spin",
+  done: "text-emerald-600",
+  warning: "text-amber-600",
+  failed: "text-destructive",
+  skipped: "text-muted-foreground",
+};
+
+/** A folder transfer's steps and where it is. */
+function StepStrip({ steps }: { steps: FolderStep[] }) {
+  return (
+    <ol
+      aria-label="Steps"
+      className="flex shrink-0 items-center gap-1 overflow-x-auto border-b px-2 py-1 text-xs"
+    >
+      {steps.map((s, i) => {
+        const Icon = STEP_ICON[s.status];
+        return (
+          <li
+            key={i}
+            title={s.detail ?? undefined}
+            aria-label={`${s.label}: ${s.status}`}
+            className={cn(
+              "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5",
+              s.status === "running" && "bg-muted font-medium",
+              s.status === "failed" && "bg-destructive/10",
+            )}
+          >
+            {i > 0 && <ChevronRightIcon className="-ml-1 size-3 text-muted-foreground/60" />}
+            <Icon className={cn("size-3.5", STEP_COLOR[s.status])} />
+            <span className={s.status === "skipped" ? "text-muted-foreground line-through" : ""}>
+              {s.label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function JobIcon({ tab }: { tab: TerminalTab }) {
   const cls = "size-3 shrink-0 text-muted-foreground";
+  if (tab.job.kind === "folder") return <FolderDownIcon className={cls} aria-label="Folder" />;
   if (tab.job.kind === "script") return <FileCode2Icon className={cls} aria-label="Script" />;
   if (tab.job.kind === "transfer")
     return tab.job.spec.direction === "upload" ? (

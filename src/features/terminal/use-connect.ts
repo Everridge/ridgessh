@@ -8,10 +8,12 @@ import { useTerminalStore } from "./store";
 export function useConnect() {
   const qc = useQueryClient();
   return {
-    connect: (host: Pick<Host, "id" | "alias">) => useTerminalStore.getState().open(host),
-    connectExternal: (host: Pick<Host, "id" | "alias">) =>
+    /** `user`: connect as `user@alias` (a per-user `Match` block). */
+    connect: (host: Pick<Host, "id" | "alias">, user?: string | null) =>
+      useTerminalStore.getState().open(host, user),
+    connectExternal: (host: Pick<Host, "id" | "alias">, user?: string | null) =>
       api
-        .terminalOpenExternal(host.id)
+        .terminalOpenExternal(host.id, user ?? null)
         .then(() => invalidateAll(qc))
         .catch((e) => toast.error(`Could not open terminal: ${errorMessage(e)}`)),
   };

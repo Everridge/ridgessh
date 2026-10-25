@@ -16,7 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useHostsData } from "@/features/hosts/queries";
+import { useHostsData, useVariants, variantsFor } from "@/features/hosts/queries";
+import { UserSelect } from "@/features/hosts/user-select";
 import { useTerminalStore } from "@/features/terminal/store";
 import { api, type Host, type TransferSpec } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
@@ -32,7 +33,13 @@ export function TransferDialog() {
     <Dialog open={!!target && !!host} onOpenChange={(o) => !o && close()}>
       <DialogContent className="sm:max-w-xl">
         {target && host && (
-          <Body key={host.id} host={host} initial={target.direction} onDone={close} />
+          <Body
+            key={host.id}
+            host={host}
+            initial={target.direction}
+            initialUser={target.user ?? null}
+            onDone={close}
+          />
         )}
       </DialogContent>
     </Dialog>
@@ -42,13 +49,18 @@ export function TransferDialog() {
 function Body({
   host,
   initial,
+  initialUser,
   onDone,
 }: {
   host: Host;
   initial: "upload" | "download";
+  initialUser: string | null;
   onDone: () => void;
 }) {
   const [direction, setDirection] = useState(initial);
+  const [user, setUser] = useState(initialUser);
+  const users = variantsFor(host, useVariants()).map((v) => v.user);
+  const shownAlias = user ? `${user}@${host.alias}` : host.alias;
   const lastRemote = useQuery({
     queryKey: ["transfer-last-remote", host.id],
     queryFn: () => api.transferLastRemote(host.id),
@@ -101,16 +113,16 @@ function Body({
 
   const spec: TransferSpec =
     direction === "upload"
-      ? { hostId: host.id, direction, local: files, remote: remoteValue, recursive: false }
-      : { hostId: host.id, direction, local: [localDir], remote: remoteValue, recursive };
+      ? { hostId: host.id, direction, local: files, remote: remoteValue, recursive: false, user }
+      : { hostId: host.id, direction, local: [localDir], remote: remoteValue, recursive, user };
   const ready =
     remoteValue.trim() !== "" && (direction === "upload" ? files.length > 0 : localDir !== "");
 
   const start = () => {
     const title =
       direction === "upload"
-        ? `↑ ${files.length === 1 ? baseName(files[0]) : `${files.length} items`} → ${host.alias}`
-        : `↓ ${baseName(remoteValue)} ← ${host.alias}`;
+        ? `↑ ${files.length === 1 ? baseName(files[0]) : `${files.length} items`} → ${shownAlias}`
+        : `↓ ${baseName(remoteValue)} ← ${shownAlias}`;
     useTerminalStore.getState().openJob(host, { kind: "transfer", spec }, title);
     onDone();
   };
@@ -118,7 +130,7 @@ function Body({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Copy files — {host.alias}</DialogTitle>
+        <DialogTitle>Copy files — {shownAlias}</DialogTitle>
         <DialogDescription>
           Runs scp in a terminal tab, so you can answer password or host-key prompts there.
         </DialogDescription>
@@ -129,6 +141,12 @@ function Body({
           <TabsTrigger value="download">Download</TabsTrigger>
         </TabsList>
       </Tabs>
+      <UserSelect
+        users={users}
+        value={user}
+        onChange={setUser}
+        defaultLabel={host.user ? `${host.user} (Host block)` : "Default (Host block)"}
+      />
 
       {direction === "upload" ? (
         <div className="grid gap-2">

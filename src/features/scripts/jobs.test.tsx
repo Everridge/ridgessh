@@ -78,7 +78,13 @@ describe("scripts and transfers", () => {
     expect(tabs.map((t) => t.title).sort()).toEqual(["▶ Disk usage · db", "▶ Disk usage · web"]);
     expect(tabs[0].job).toEqual({
       kind: "script",
-      run: { hostId: tabs[0].hostId, scriptId: "s1", mode: "stream", args: `--path "/var/log"` },
+      run: {
+        hostId: tabs[0].hostId,
+        scriptId: "s1",
+        mode: "stream",
+        args: `--path "/var/log"`,
+        user: null,
+      },
     });
     expect(await screen.findByRole("tab", { name: /disk usage · web/i })).toBeInTheDocument();
   });
@@ -136,6 +142,7 @@ describe("scripts and transfers", () => {
         local: ["C:\\work\\build.zip"],
         remote: "/srv/app",
         recursive: false,
+        user: null,
       },
     });
   });

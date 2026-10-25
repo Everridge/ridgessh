@@ -20,6 +20,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_terminal_theme() -> String {
+    "auto".into()
+}
+
+fn default_terminal_font_size() -> u32 {
+    13
+}
+
 /// Every user-editable setting. Missing keys fall back to [`Settings::default`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +50,14 @@ pub struct Settings {
     /// Look for a new release on startup.
     #[serde(default = "default_true")]
     pub check_updates: bool,
+    /// Terminal colour scheme id (the list lives in the frontend); "auto" follows the app theme.
+    #[serde(default = "default_terminal_theme")]
+    pub terminal_theme: String,
+    /// Terminal font family; `None` = the platform's default monospace font.
+    #[serde(default)]
+    pub terminal_font_family: Option<String>,
+    #[serde(default = "default_terminal_font_size")]
+    pub terminal_font_size: u32,
 }
 
 impl Default for Settings {
@@ -55,6 +71,9 @@ impl Default for Settings {
             retention_days: 0,
             trash_retention_days: default_trash_days(),
             check_updates: true,
+            terminal_theme: default_terminal_theme(),
+            terminal_font_family: None,
+            terminal_font_size: default_terminal_font_size(),
         }
     }
 }
@@ -94,6 +113,10 @@ pub fn load(tx: &Transaction) -> AppResult<Settings> {
         retention_days: get(tx, "retention_days")?.unwrap_or(d.retention_days),
         trash_retention_days: get(tx, "trash_retention_days")?.unwrap_or(d.trash_retention_days),
         check_updates: get(tx, "check_updates")?.unwrap_or(d.check_updates),
+        terminal_theme: get(tx, "terminal_theme")?.unwrap_or(d.terminal_theme),
+        terminal_font_family: get::<String>(tx, "terminal_font_family")?
+            .filter(|f| !f.trim().is_empty()),
+        terminal_font_size: get(tx, "terminal_font_size")?.unwrap_or(d.terminal_font_size),
     })
 }
 
@@ -127,6 +150,37 @@ fn validate(s: &mut Settings) -> AppResult<()> {
         return Err(AppError::Validation(
             "the age limit is at most 3650 days".into(),
         ));
+    }
+    let theme = &s.terminal_theme;
+    if theme.is_empty()
+        || theme.len() > 40
+        || !theme
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(AppError::Validation(format!(
+            "unknown terminal colour scheme {theme:?}"
+        )));
+    }
+    if !(8..=32).contains(&s.terminal_font_size) {
+        return Err(AppError::Validation(
+            "the terminal font size must be 8–32".into(),
+        ));
+    }
+    // The family ends up inside a CSS font-family list, quoted by the frontend.
+    s.terminal_font_family = s
+        .terminal_font_family
+        .take()
+        .map(|f| f.trim().to_string())
+        .filter(|f| !f.is_empty());
+    if let Some(f) = &s.terminal_font_family
+        && (f.chars().count() > 100
+            || f.chars()
+                .any(|c| c.is_control() || matches!(c, '"' | '\'' | ';' | '\\' | '{' | '}')))
+    {
+        return Err(AppError::Validation(format!(
+            "not a usable font name: {f:?}"
+        )));
     }
     s.backup_dir = s
         .backup_dir
@@ -170,6 +224,13 @@ pub fn save(tx: &Transaction, mut s: Settings) -> AppResult<Settings> {
     put(tx, "retention_days", &s.retention_days)?;
     put(tx, "trash_retention_days", &s.trash_retention_days)?;
     put(tx, "check_updates", &s.check_updates)?;
+    put(tx, "terminal_theme", &s.terminal_theme)?;
+    put(
+        tx,
+        "terminal_font_family",
+        &s.terminal_font_family.clone().unwrap_or_default(),
+    )?;
+    put(tx, "terminal_font_size", &s.terminal_font_size)?;
     let after = load(tx)?;
     if after != before {
         history::record(
@@ -231,6 +292,11 @@ mod tests {
         assert!(bad(|s| s.confirmation_word = "two words".into()));
         assert!(bad(|s| s.retention_count = 0));
         assert!(bad(|s| s.backup_dir = Some("relative/dir".into())));
+        assert!(bad(|s| s.terminal_font_size = 7));
+        assert!(bad(|s| s.terminal_theme = "One Dark".into()));
+        assert!(bad(
+            |s| s.terminal_font_family = Some("x\"; color: red".into())
+        ));
 
         let dir = tempfile::tempdir().unwrap();
         let wanted = Settings {
@@ -242,9 +308,16 @@ mod tests {
             retention_days: 7,
             trash_retention_days: 0,
             check_updates: false,
+            terminal_theme: "dracula".into(),
+            terminal_font_family: Some(" JetBrains Mono ".into()),
+            terminal_font_size: 15,
         };
         let saved = db.tx(|tx| save(tx, wanted.clone())).unwrap();
         assert_eq!(saved.confirmation_word, "WRITE");
+        assert_eq!(
+            saved.terminal_font_family.as_deref(),
+            Some("JetBrains Mono")
+        );
         assert!(dir.path().join("bk").is_dir());
         assert_eq!(db.tx(load).unwrap(), saved);
         let log = db

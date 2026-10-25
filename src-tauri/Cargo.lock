@@ -4097,6 +4097,7 @@ dependencies = [
  "glob",
  "hex",
  "keyring",
+ "libc",
  "portable-pty",
  "rusqlite",
  "rusqlite_migration",
