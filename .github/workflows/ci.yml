@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS is paused to keep runs short; add macos-latest back to build it again.
+        # macOS is paused to keep runs short; add macos-latest back to check it again.
         os: [windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
