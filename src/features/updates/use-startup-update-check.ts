@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
-import { toast } from "sonner";
 import { useSettings } from "@/features/backup/queries";
 import { useUpdateStore } from "./store";
 
 /**
- * Looks for a new release once, a few seconds after start, when the setting allows it.
- * Failures stay quiet: being offline is not worth a notification.
+ * Looks for a new release once, a few seconds after start, when the setting allows it, and
+ * offers it in the update dialog unless the user skipped that version. Failures stay quiet:
+ * being offline is not worth a notification.
  */
 export function useStartupUpdateCheck(enabled = import.meta.env.PROD, delayMs = 4000) {
   const allowed = useSettings().data?.settings.checkUpdates;
@@ -20,14 +20,8 @@ export function useStartupUpdateCheck(enabled = import.meta.env.PROD, delayMs = 
         .getState()
         .check()
         .then((update) => {
-          if (!update) return;
-          toast.info(`RidgeSSH ${update.version} is available`, {
-            action: {
-              label: "View",
-              onClick: () => useUpdateStore.getState().setDialogOpen(true),
-            },
-            duration: 15_000,
-          });
+          const store = useUpdateStore.getState();
+          if (update && update.version !== store.skipped) store.setDialogOpen(true);
         })
         .catch((e: unknown) => console.warn("update check failed", e));
     }, delayMs);

@@ -307,6 +307,15 @@ shadcn pieces: Sidebar, Resizable, DataTable, Dialog/Sheet, Command (Ctrl+K), Ta
 
 **As built (M9)**: a per-user NSIS installer (no admin rights; downloads WebView2 if it is missing). The updater plugin reads `latest.json` from the latest published GitHub release and checks its minisign signature. The public key is in `tauri.conf.json`; the private key and its password are kept outside the repo and stored as CI secrets. The app checks once on startup (there is a setting to turn this off) and again whenever the user clicks "Check now" in Settings → About. The update dialog shows the release notes and warns when terminal sessions are open. The NSIS installer then runs in passive mode and the app restarts. Before a newer schema is applied, the database is copied to `db.v<N>.bak`, and a database from a newer version is refused instead of being opened. Releases: `pnpm version:bump X.Y.Z` → `CHANGELOG.md` section → tag `vX.Y.Z` → the `release.yml` workflow builds the installer and creates a draft release. The draft becomes visible to the updater once it is published. Authenticode signing uses Azure Trusted Signing; it is switched on by repository variables and secrets, and builds are unsigned until those are set.
 
+**Release pipeline (as built)**: `staging` is the working branch; CI only runs the checks on it. Installers are built only for `main`. Every push to `main` is a release, handled by `release.yml` on Windows:
+
+- `scripts/version.mjs next` picks the version. It is the files' version when that is newer than the last tag; otherwise the patch number goes up, or the minor/major one when a commit message says `#minor`/`#major`.
+- `prepare` sets the version in every file and renames `## Unreleased` in `CHANGELOG.md`; without that section, the commit subjects are listed.
+- After the checks and the signed build, the workflow commits `Release vX.Y.Z` to `main` and tags it in one atomic push. It then publishes the installer, its `.sig`, `latest.json` (written by `scripts/publish.mjs`) and a copy under the stable name `RidgeSSH-setup.exe` as this repo's GitHub release, using the workflow's own token. The README links to `releases/latest/download/RidgeSSH-setup.exe`, so it never needs updating. Last, it merges the tag back into `staging`.
+- The updater endpoint is `latest.json` of the latest release of this (public) repo.
+- On startup the app opens the update dialog itself, unless the user chose "Skip this version" for that version. That choice is remembered in `localStorage`; "Check now" still shows the update.
+- macOS releases are paused until signing is decided.
+
 **As built (M10)**:
 
 - The macOS build uses `/usr/bin/ssh` and `/usr/bin/scp` and stores the backup password in the Keychain.

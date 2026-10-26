@@ -2,6 +2,24 @@
 
 Lightweight desktop SSH connection manager (Tauri 2 + React + shadcn/ui). See [docs/PLAN.md](docs/PLAN.md).
 
+## Download
+
+[Latest Windows installer](https://github.com/Everridge/ridgessh/releases/latest/download/RidgeSSH-setup.exe)
+· [all releases](https://github.com/Everridge/ridgessh/releases). The installed app
+checks for updates when it starts and offers to install them.
+
+## Branches and releases
+
+- Work goes to **`staging`** (the default branch). Each push runs the checks; nothing is built
+  or released.
+- Merging `staging` into **`main`** releases it (`.github/workflows/release.yml`): the patch
+  version goes up (or minor/major when a commit message says `#minor` / `#major`, or when the
+  version was raised with `pnpm version:bump X.Y.Z`), the `## Unreleased` section of
+  `CHANGELOG.md` becomes the release notes, and the signed installer is published as a
+  [GitHub release](https://github.com/Everridge/ridgessh/releases) of this repo, where the
+  updater looks. The workflow commits `Release vX.Y.Z` to `main`, tags it and merges it back into
+  `staging`.
+
 ## Prerequisites
 
 - Node 22+, pnpm 10+

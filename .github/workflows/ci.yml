@@ -1,8 +1,10 @@
+# Checks every push to staging and every pull request. Installers are built only for main, by
+# release.yml.
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [staging]
   pull_request:
 
 concurrency:
@@ -14,7 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        # macOS is paused to keep runs short; add macos-latest back to check it again.
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -33,7 +36,3 @@ jobs:
       - run: node scripts/version.mjs check
       - run: pnpm format:check
       - run: pnpm check
-      # Builds the app bundle (unsigned, no updater artifacts) to catch bundling problems early.
-      - name: Build the macOS app
-        if: runner.os == 'macOS'
-        run: pnpm tauri build --bundles app --no-sign --config '{"bundle":{"createUpdaterArtifacts":false}}'

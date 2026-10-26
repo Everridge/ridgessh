@@ -19,6 +19,27 @@ interface UpdateState {
   /** Downloads, installs and restarts. On Windows the installer closes the app itself. */
   install: () => Promise<void>;
   setDialogOpen: (open: boolean) => void;
+  /** Version the user chose to skip: the startup check stays quiet about it. */
+  skipped: string | null;
+  skip: (version: string) => void;
+}
+
+const SKIPPED_KEY = "ridgessh.updates.skipped";
+
+function readSkipped() {
+  try {
+    return localStorage.getItem(SKIPPED_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** The updater's own errors name a URL or JSON; say what it means for the user instead. */
+function checkError(e: unknown) {
+  const message = errorMessage(e);
+  return /fetch|json|request|connect|network|unreachable|dns|timed out|404/i.test(message)
+    ? `Could not reach the update server. Check your internet connection and try again. (${message})`
+    : message;
 }
 
 export const useUpdateStore = create<UpdateState>((set, get) => ({
@@ -28,6 +49,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   total: null,
   error: null,
   dialogOpen: false,
+  skipped: readSkipped(),
 
   check: async () => {
     const busy = get().status;
@@ -40,7 +62,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       set({ status: update ? "available" : "none", update });
       return update;
     } catch (e) {
-      set({ status: "error", error: errorMessage(e) });
+      set({ status: "error", error: checkError(e) });
       throw e;
     }
   },
@@ -63,4 +85,13 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   setDialogOpen: (dialogOpen) => set({ dialogOpen }),
+
+  skip: (version) => {
+    try {
+      localStorage.setItem(SKIPPED_KEY, version);
+    } catch {
+      // Not remembered across restarts; still closes for now.
+    }
+    set({ skipped: version, dialogOpen: false });
+  },
 }));
