@@ -1,8 +1,11 @@
+# Checks every push to staging and every pull request; pushes to staging also build a test
+# installer, kept as a workflow artifact for 14 days. Installed apps never see these builds:
+# only main is released (release.yml).
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [staging]
   pull_request:
 
 concurrency:
@@ -37,3 +40,15 @@ jobs:
       - name: Build the macOS app
         if: runner.os == 'macOS'
         run: pnpm tauri build --bundles app --no-sign --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Build the Windows installer
+        if: runner.os == 'Windows' && github.event_name == 'push'
+        shell: bash
+        run: pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Keep the installer
+        if: runner.os == 'Windows' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RidgeSSH-staging-${{ github.sha }}
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 14
+          if-no-files-found: error

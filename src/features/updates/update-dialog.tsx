@@ -30,7 +30,7 @@ export function UpdateDialog() {
 }
 
 function Body({ onClose }: { onClose: () => void }) {
-  const { update, status, downloaded, total, error, install } = useUpdateStore();
+  const { update, status, downloaded, total, error, install, skip } = useUpdateStore();
   const current = useQuery({ queryKey: ["app-info"], queryFn: api.appInfo }).data?.version;
   const running = useTerminalStore(
     (s) => s.tabs.filter((t) => t.status === "open" || t.status === "connecting").length,
@@ -96,6 +96,14 @@ function Body({ onClose }: { onClose: () => void }) {
       </p>
 
       <DialogFooter>
+        <Button
+          variant="ghost"
+          className="sm:mr-auto"
+          onClick={() => skip(update.version)}
+          disabled={busy}
+        >
+          Skip this version
+        </Button>
         <Button variant="outline" onClick={onClose} disabled={busy}>
           Later
         </Button>

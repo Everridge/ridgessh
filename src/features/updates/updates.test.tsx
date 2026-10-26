@@ -42,10 +42,24 @@ beforeEach(() => {
     total: null,
     error: null,
     dialogOpen: false,
+    skipped: null,
   });
+  localStorage.clear();
   useTerminalStore.setState({ tabs: [], activeId: null });
   useUiStore.setState({ settingsOpen: false });
 });
+
+function renderStartupCheck() {
+  function Probe() {
+    useStartupUpdateCheck(true, 0);
+    return null;
+  }
+  render(
+    <AppProviders>
+      <Probe />
+    </AppProviders>,
+  );
+}
 
 function renderApp() {
   const user = userEvent.setup();
@@ -92,26 +106,38 @@ describe("updates", () => {
     await user.click(within(settings).getByRole("button", { name: "Check now" }));
     expect(await within(settings).findByText("RidgeSSH is up to date.")).toBeInTheDocument();
     await user.click(within(settings).getByRole("button", { name: "Check now" }));
-    expect(await within(settings).findByText("network unreachable")).toBeInTheDocument();
+    expect(
+      await within(settings).findByText(/Could not reach the update server.*network unreachable/),
+    ).toBeInTheDocument();
   });
 
-  it("checks once on startup and offers the update in a notification", async () => {
+  it("checks once on startup and offers the update", async () => {
     installFakeBackend({});
     updater.check.mockResolvedValue(fakeUpdate());
-    function Probe() {
-      useStartupUpdateCheck(true, 0);
-      return null;
-    }
-    const user = userEvent.setup();
-    render(
-      <AppProviders>
-        <Probe />
-      </AppProviders>,
-    );
-    expect(await screen.findByText("RidgeSSH 0.2.0 is available")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "View" }));
-    expect(useUpdateStore.getState().dialogOpen).toBe(true);
+    const user = renderApp();
+    renderStartupCheck();
+    const dialog = await screen.findByRole("dialog", { name: "RidgeSSH 0.2.0" });
     expect(updater.check).toHaveBeenCalledOnce();
+    await user.click(within(dialog).getByRole("button", { name: "Later" }));
+    expect(useUpdateStore.getState().dialogOpen).toBe(false);
+  });
+
+  it("stays quiet on startup about a skipped version", async () => {
+    installFakeBackend({});
+    updater.check.mockResolvedValue(fakeUpdate());
+    const user = renderApp();
+    useUiStore.getState().setSettingsOpen(true);
+    const settings = await screen.findByRole("dialog", { name: "Settings" });
+    await user.click(within(settings).getByRole("tab", { name: "About" }));
+    await user.click(within(settings).getByRole("button", { name: "Check now" }));
+    const dialog = await screen.findByRole("dialog", { name: "RidgeSSH 0.2.0" });
+    await user.click(within(dialog).getByRole("button", { name: "Skip this version" }));
+    expect(localStorage.getItem("ridgessh.updates.skipped")).toBe("0.2.0");
+
+    useUpdateStore.setState({ status: "idle", update: null });
+    renderStartupCheck();
+    await waitFor(() => expect(updater.check).toHaveBeenCalledTimes(2));
+    expect(useUpdateStore.getState()).toMatchObject({ status: "available", dialogOpen: false });
   });
 
   it("does not check on startup when the setting is off", async () => {

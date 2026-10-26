@@ -1,11 +1,12 @@
 # Changelog
 
 Each `## <version>` section becomes the GitHub release notes and the text shown in the in-app
-update dialog, so write it for users.
+update dialog, so write it for users. Add changes under `## Unreleased`: the release workflow
+renames it to the version it releases. Without it, the commit subjects are listed instead.
 
 ## 0.1.0
 
-First release, for Windows 10/11 and macOS 11+.
+First release, for Windows 10 and 11.
 
 - Hosts and groups on top of your `~/.ssh/config`: descriptions, notes, tags and favorites live in
   RidgeSSH's own database, and the config file is only written after you type the confirmation
