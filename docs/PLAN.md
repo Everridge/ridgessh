@@ -311,8 +311,8 @@ shadcn pieces: Sidebar, Resizable, DataTable, Dialog/Sheet, Command (Ctrl+K), Ta
 
 - `scripts/version.mjs next` picks the version. It is the files' version when that is newer than the last tag; otherwise the patch number goes up, or the minor/major one when a commit message says `#minor`/`#major`.
 - `prepare` sets the version in every file and renames `## Unreleased` in `CHANGELOG.md`; without that section, the commit subjects are listed.
-- After the checks and the signed build, the workflow commits `Release vX.Y.Z` to `main` and tags it in one atomic push. It then publishes the installer, its `.sig`, `latest.json` and a copy under the stable name `RidgeSSH-setup.exe` in the public `Everridge/ridgessh-releases` repo (written by `scripts/publish.mjs`) and refreshes that repo's README. Last, it merges the tag back into `staging`.
-- The source repo stays private, so the updater endpoint points at the public repo's `latest.json`.
+- After the checks and the signed build, the workflow commits `Release vX.Y.Z` to `main` and tags it in one atomic push. It then publishes the installer, its `.sig`, `latest.json` (written by `scripts/publish.mjs`) and a copy under the stable name `RidgeSSH-setup.exe` as this repo's GitHub release, using the workflow's own token. The README links to `releases/latest/download/RidgeSSH-setup.exe`, so it never needs updating. Last, it merges the tag back into `staging`.
+- The updater endpoint is `latest.json` of the latest release of this (public) repo.
 - On startup the app opens the update dialog itself, unless the user chose "Skip this version" for that version. That choice is remembered in `localStorage`; "Check now" still shows the update.
 - macOS releases are paused until signing is decided.
 

@@ -3,12 +3,11 @@
 #      newer version, or a commit says #minor / #major) and gives CHANGELOG.md its section,
 #   2. runs the checks and builds the signed Windows installer,
 #   3. commits "Release vX.Y.Z" to main and tags it,
-#   4. publishes the installer and latest.json in the public releases repo, where installed apps
-#      look for updates, and refreshes that repo's README download link,
+#   4. publishes the installer and latest.json as this repo's GitHub release, where installed
+#      apps look for updates and the README's download link points,
 #   5. merges main back into staging, so the version commit does not make them drift.
 #
-# Secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD (updater signature);
-# RELEASES_TOKEN (fine-grained token with "Contents: read and write" on the releases repo).
+# Secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD (updater signature).
 #
 # Optional Windows code signing (Azure Trusted Signing): repository variables
 # AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE and secrets
@@ -30,9 +29,6 @@ concurrency:
 
 permissions:
   contents: write
-
-env:
-  RELEASES_REPO: Everridge/ridgessh-releases
 
 jobs:
   release:
@@ -57,13 +53,11 @@ jobs:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
 
-      - name: Check the secrets are set
+      - name: Check the signing key is set
         env:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           [ -n "$KEY" ] || { echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set"; exit 1; }
-          [ -n "$TOKEN" ] || { echo "::error::RELEASES_TOKEN is not set"; exit 1; }
 
       - name: Choose the version
         id: version
@@ -116,30 +110,18 @@ jobs:
       - name: Publish the release
         env:
           V: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           dir=src-tauri/target/release/bundle/nsis
           exe="$dir/RidgeSSH_${V}_x64-setup.exe"
           [ -f "$exe" ] && [ -f "$exe.sig" ] || { ls -l "$dir"; exit 1; }
           out="$RUNNER_TEMP/release"
           mkdir -p "$out"
-          node scripts/publish.mjs manifest "$V" "$exe" "$RELEASES_REPO" > "$out/latest.json"
+          node scripts/publish.mjs manifest "$V" "$exe" "$GITHUB_REPOSITORY" > "$out/latest.json"
           cp "$exe" "$out/RidgeSSH-setup.exe"
-          gh release create "v$V" --repo "$RELEASES_REPO" --title "RidgeSSH $V" \
+          gh release create "v$V" --repo "$GITHUB_REPOSITORY" --verify-tag --title "RidgeSSH $V" \
             --notes-file "$RUNNER_TEMP/notes.md" --latest \
             "$exe" "$exe.sig" "$out/latest.json" "$out/RidgeSSH-setup.exe"
-
-      - name: Update the download page
-        env:
-          V: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-        run: |
-          node scripts/publish.mjs readme "$V" "$RELEASES_REPO" > "$RUNNER_TEMP/README.md"
-          sha=$(gh api "repos/$RELEASES_REPO/contents/README.md" --jq .sha 2>/dev/null || true)
-          gh api -X PUT "repos/$RELEASES_REPO/contents/README.md" \
-            -f message="RidgeSSH $V" \
-            -f content="$(base64 -w0 "$RUNNER_TEMP/README.md")" \
-            ${sha:+-f sha="$sha"} > /dev/null
 
       - name: Merge main back into staging
         env:

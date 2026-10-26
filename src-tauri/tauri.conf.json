@@ -56,7 +56,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE1RTA0NDlFREQwQUU0QTcKUldTbjVBcmRua1RnRmRvOCs2cU1HZ0NRZDNFbkE2eFc0WitNWThwN2YwbHNzc2UwZWZnWFBkeE0K",
-      "endpoints": ["https://github.com/Everridge/ridgessh-releases/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/Everridge/ridgessh/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"
       }
