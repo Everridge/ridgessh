@@ -10,8 +10,8 @@ checks for updates when it starts and offers to install them.
 
 ## Branches and releases
 
-- Work goes to **`staging`** (the default branch). Each push runs the checks and builds a test
-  installer, kept for 14 days as an artifact of the CI run. Installed apps never see it.
+- Work goes to **`staging`** (the default branch). Each push runs the checks; nothing is built
+  or released.
 - Merging `staging` into **`main`** releases it (`.github/workflows/release.yml`): the patch
   version goes up (or minor/major when a commit message says `#minor` / `#major`, or when the
   version was raised with `pnpm version:bump X.Y.Z`), the `## Unreleased` section of
