@@ -103,7 +103,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Release v$V [skip ci]"
+          # Nothing to commit when the files already had this version and its notes.
+          git diff --quiet || git commit -am "Release v$V [skip ci]"
           git tag -a "v$V" -m "RidgeSSH $V"
           git push --atomic origin HEAD:main "v$V"
 
