@@ -1,10 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { AppProviders } from "@/components/app-providers";
 import { useUiStore } from "@/stores/ui";
 import { installFakeBackend } from "@/test/fake-backend";
 import App from "./App";
+import { HOST_DRAG_TYPE } from "@/features/hosts/drag";
 
 function renderApp() {
   const user = userEvent.setup();
@@ -129,6 +130,39 @@ describe("hosts", () => {
 });
 
 describe("groups", () => {
+  it("adds a dragged host to a group while keeping it in All hosts", async () => {
+    const backend = installFakeBackend({ hosts: [{ alias: "dragged" }, { alias: "outside" }] });
+    const user = renderApp();
+    const list = await findHostList();
+    await user.click(screen.getByRole("button", { name: /new group/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/name/i), "Production");
+    await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
+    const group = await screen.findByRole("button", { name: /production/i });
+    const row = within(list).getByText("dragged", { selector: "span" }).closest('[role="button"]')!;
+    const data: Record<string, string> = {};
+    const dataTransfer = {
+      types: [HOST_DRAG_TYPE],
+      setData: (type: string, value: string) => {
+        data[type] = value;
+      },
+      getData: (type: string) => data[type] ?? "",
+      effectAllowed: "",
+      dropEffect: "",
+    };
+    fireEvent.dragStart(row, { dataTransfer });
+    fireEvent.dragOver(group, { dataTransfer });
+    fireEvent.drop(group, { dataTransfer });
+    await waitFor(() => expect(backend.calls.some((c) => c.cmd === "hosts_move")).toBe(true));
+    await waitFor(() => expect(within(hostList()).getByText("Production")).toBeInTheDocument());
+    expect(within(hostList()).getByText("dragged", { selector: "span" })).toBeInTheDocument();
+    await user.click(group);
+    expect(
+      within(await findHostList()).getByText("dragged", { selector: "span" }),
+    ).toBeInTheDocument();
+    expect(within(hostList()).queryByText("outside", { selector: "span" })).not.toBeInTheDocument();
+  });
+
   it("creates a group and filters hosts by it", async () => {
     installFakeBackend({ hosts: [{ alias: "in-group" }, { alias: "outside" }] });
     const user = renderApp();

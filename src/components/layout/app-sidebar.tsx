@@ -44,7 +44,13 @@ import {
 import { GroupDialog, type GroupDialogTarget } from "@/features/groups/group-dialog";
 import { buildGroupTree, countByGroup, type GroupNode } from "@/features/hosts/filter";
 import { useBackupStatus } from "@/features/backup/queries";
-import { useDeleteGroup, useGroupsData, useHostsData } from "@/features/hosts/queries";
+import {
+  useDeleteGroup,
+  useGroupsData,
+  useHostsData,
+  useMoveHosts,
+} from "@/features/hosts/queries";
+import { HOST_DRAG_TYPE } from "@/features/hosts/drag";
 import type { Group, Host } from "@/lib/ipc";
 import { useUiStore, type HostView } from "@/stores/ui";
 
@@ -261,6 +267,9 @@ function GroupItem({ node, counts, onCreateChild, onEdit, onDelete }: GroupItemP
   const active = useUiStore((s) => s.view === "group" && s.groupId === node.id);
   const setGroup = useUiStore((s) => s.setGroup);
   const [open, setOpen] = useState(true);
+  const [dragOver, setDragOver] = useState(false);
+  const move = useMoveHosts();
+  const hosts = useHostsData();
   const n = counts.get(node.id) ?? 0;
 
   return (
@@ -270,6 +279,35 @@ function GroupItem({ node, counts, onCreateChild, onEdit, onDelete }: GroupItemP
           isActive={active}
           onClick={() => setGroup(node.id)}
           tooltip={node.name}
+          className={dragOver ? "bg-sidebar-accent ring-2 ring-primary" : undefined}
+          onDragOver={(e) => {
+            if (!Array.from(e.dataTransfer.types).includes(HOST_DRAG_TYPE)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false);
+          }}
+          onDrop={(e) => {
+            setDragOver(false);
+            const data = e.dataTransfer.getData(HOST_DRAG_TYPE);
+            if (!data) return;
+            e.preventDefault();
+            try {
+              const parsed: unknown = JSON.parse(data);
+              if (!Array.isArray(parsed)) return;
+              const liveIds = new Set(hosts.filter((h) => !h.deletedAt).map((h) => h.id));
+              const ids = [
+                ...new Set(
+                  parsed.filter((id): id is string => typeof id === "string" && liveIds.has(id)),
+                ),
+              ];
+              if (ids.length) move.mutate({ ids, groupId: node.id });
+            } catch {
+              // Ignore malformed drag data.
+            }
+          }}
           style={{ paddingLeft: 8 + node.depth * 14 }}
         >
           {node.children.length > 0 ? (

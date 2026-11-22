@@ -59,6 +59,7 @@ import {
   type ListEntry,
 } from "./filter";
 import { connectionLabel } from "./format";
+import { HOST_DRAG_TYPE } from "./drag";
 import { useHostActions, usePurgeConfirm } from "./host-actions";
 import { SyncBadges } from "./host-badges";
 import {
@@ -205,9 +206,16 @@ export function HostListPanel() {
                   host={e.host}
                   groups={groups}
                   variants={e.host.deletedAt ? [] : variantsFor(e.host, variants)}
+                  dragIds={checked.map((h) => h.id)}
                 />
               ) : (
-                <ServerRow key={e.key} entry={e} groups={groups} variants={variants} />
+                <ServerRow
+                  key={e.key}
+                  entry={e}
+                  groups={groups}
+                  variants={variants}
+                  dragIds={checked.map((h) => h.id)}
+                />
               ),
             )}
           </ul>
@@ -222,10 +230,12 @@ function ServerRow({
   entry,
   groups,
   variants,
+  dragIds,
 }: {
   entry: Extract<ListEntry, { kind: "server" }>;
   groups: Group[];
   variants: UserVariant[];
+  dragIds: string[];
 }) {
   const [expanded, setExpanded] = useState(true);
   const checkedIds = useUiStore((s) => s.checkedIds);
@@ -286,6 +296,7 @@ function ServerRow({
               host={h}
               groups={groups}
               variants={variantsFor(h, variants)}
+              dragIds={dragIds}
               nested
             />
           ))}
@@ -299,11 +310,13 @@ function HostRow({
   host,
   groups,
   variants,
+  dragIds,
   nested = false,
 }: {
   host: Host;
   groups: Group[];
   variants: UserVariant[];
+  dragIds: string[];
   /** Shown inside a server entry. */
   nested?: boolean;
 }) {
@@ -326,6 +339,14 @@ function HostRow({
           <div
             role="button"
             tabIndex={0}
+            draggable={!trashed}
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData(
+                HOST_DRAG_TYPE,
+                JSON.stringify(dragIds.includes(host.id) ? dragIds : [host.id]),
+              );
+            }}
             onClick={() => selectHost(host.id)}
             onDoubleClick={() => !trashed && connect(host)}
             onKeyDown={(e) => {
@@ -633,7 +654,7 @@ function EmptyState({ view, searching }: { view: HostView; searching: boolean })
     recent: "Hosts you connect to will show up here.",
     removed: "Hosts that disappear from ~/.ssh/config are listed here.",
     trash: "Trash is empty.",
-    group: "This group has no hosts. Use “Move to group” on a host.",
+    group: "This group has no hosts. Drag a host here, or use “Move to group”.",
   };
   return (
     <Empty icon={ServerIcon} title="Nothing here" text={text[view]}>
