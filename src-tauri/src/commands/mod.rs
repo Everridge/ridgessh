@@ -8,6 +8,7 @@ pub mod groups;
 pub mod history;
 pub mod hosts;
 pub mod jobs;
+pub mod keys;
 pub mod sync;
 pub mod tags;
 pub mod terminal;

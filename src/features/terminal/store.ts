@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { FolderSpec, ScriptRun, StepStatus, TransferSpec } from "@/lib/ipc";
+import type { FolderSpec, KeyInstallSpec, ScriptRun, StepStatus, TransferSpec } from "@/lib/ipc";
 
 export type TabStatus = "connecting" | "open" | "exited" | "error";
 
@@ -9,6 +9,8 @@ export type TabJob =
   | { kind: "ssh"; user?: string | null }
   | { kind: "transfer"; spec: TransferSpec }
   | { kind: "script"; run: ScriptRun }
+  /** Installs the host's public key with a password login. */
+  | { kind: "keyInstall"; spec: KeyInstallSpec }
   /** `recipeId`: started from a saved recipe (its last run is recorded). */
   | { kind: "folder"; spec: FolderSpec; recipeId?: string | null };
 

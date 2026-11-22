@@ -112,7 +112,7 @@ pub struct KeyPreview {
 }
 
 /// `path` lies inside `<home>/.ssh` (lexically, no `..`).
-fn inside_ssh_dir(path: &Path, home: &Path) -> bool {
+pub(crate) fn inside_ssh_dir(path: &Path, home: &Path) -> bool {
     !path.components().any(|c| matches!(c, Component::ParentDir))
         && path.starts_with(home.join(".ssh"))
         && path != home.join(".ssh")

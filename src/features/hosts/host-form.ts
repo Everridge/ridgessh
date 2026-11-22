@@ -134,3 +134,13 @@ export function toHostInput(v: HostFormValues, color: string | null = null): Hos
 export function hostToInput(h: Host): HostInput {
   return toHostInput(toFormValues(h), h.color);
 }
+
+/** Where a key generated for a new host goes: `~/.ssh/<alias>_ed25519`. */
+export function newKeyPath(alias: string): string {
+  const name =
+    alias
+      .trim()
+      .replace(/[^A-Za-z0-9._-]/g, "_")
+      .replace(/^[.-]+/, "") || "host";
+  return `~/.ssh/${name}_ed25519`;
+}

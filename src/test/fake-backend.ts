@@ -158,6 +158,12 @@ export function installFakeBackend(seed: FakeSeed = {}) {
         log(h.id, "create", null, h);
         return h;
       }
+      case "host_create_with_key": {
+        const h = applyInput(makeHost({ id: id(), createdAt: now() }), args.input as HostInput);
+        hosts.push(h);
+        log(h.id, "create", null, h);
+        return { host: h, publicKey: `ssh-ed25519 AAAAFAKE ${h.alias}@ridgessh` };
+      }
       case "host_update": {
         const before = find(args.id as string);
         const after = applyInput(before, args.input as HostInput);

@@ -8,6 +8,7 @@ import {
   CircleXIcon,
   FileCode2Icon,
   FolderDownIcon,
+  KeyRoundIcon,
   LoaderCircleIcon,
   PlusIcon,
   RotateCwIcon,
@@ -186,6 +187,8 @@ function JobIcon({ tab }: { tab: TerminalTab }) {
   const cls = "size-3 shrink-0 text-muted-foreground";
   if (tab.job.kind === "folder") return <FolderDownIcon className={cls} aria-label="Folder" />;
   if (tab.job.kind === "script") return <FileCode2Icon className={cls} aria-label="Script" />;
+  if (tab.job.kind === "keyInstall")
+    return <KeyRoundIcon className={cls} aria-label="Install key" />;
   if (tab.job.kind === "transfer")
     return tab.job.spec.direction === "upload" ? (
       <ArrowUpFromLineIcon className={cls} aria-label="Upload" />

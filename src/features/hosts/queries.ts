@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import {
   api,
@@ -113,6 +114,16 @@ export const useCreateHost = () =>
   useDataMutation(
     (input: HostInput) => api.hostCreate(input),
     (h) => `Host "${h.alias}" created`,
+  );
+
+/** Creates a host and generates its key pair (see `api.hostCreateWithKey`). */
+export const useCreateHostWithKey = () =>
+  useDataMutation(
+    (input: HostInput) => api.hostCreateWithKey(input),
+    ({ host, publicKey }) => ({
+      message: `Host "${host.alias}" created with a new key`,
+      action: { label: "Copy public key", onClick: () => void writeText(publicKey) },
+    }),
   );
 
 export const useUpdateHost = () =>
