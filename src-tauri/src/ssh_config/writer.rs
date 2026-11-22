@@ -389,8 +389,12 @@ fn user_block_slots(file: &ConfigFile, block: &Block) -> Vec<(usize, Slot)> {
     let mut identity = false;
     let mut extras = 0;
     let mut out = Vec::new();
-    for i in block.start + 1..block.end {
-        let LineKind::Directive { key, .. } = &file.lines[i].kind else {
+    for (i, line) in file.lines[..block.end]
+        .iter()
+        .enumerate()
+        .skip(block.start + 1)
+    {
+        let LineKind::Directive { key, .. } = &line.kind else {
             continue;
         };
         if !identity && key.eq_ignore_ascii_case("identityfile") {

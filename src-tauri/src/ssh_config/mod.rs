@@ -475,8 +475,8 @@ pub fn block_slots(file: &ConfigFile, block: &Block) -> Vec<(usize, Slot)> {
     let mut taken = HashSet::new();
     let mut extras = 0;
     let mut out = Vec::new();
-    for i in first..block.end {
-        let LineKind::Directive { key, value } = &file.lines[i].kind else {
+    for (i, line) in file.lines[..block.end].iter().enumerate().skip(first) {
+        let LineKind::Directive { key, value } = &line.kind else {
             continue;
         };
         let slot = match key.to_ascii_lowercase().as_str() {
