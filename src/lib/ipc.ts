@@ -198,7 +198,7 @@ export interface AuditEntry {
 export interface Activity {
   id: number;
   hostId: string | null;
-  kind: "terminal" | "terminal_external" | "scp_up" | "scp_down" | "script";
+  kind: "terminal" | "terminal_external" | "scp_up" | "scp_down" | "script" | "key_install";
   startedAt: string;
   endedAt: string | null;
   exitCode: number | null;
@@ -371,6 +371,18 @@ export interface ScriptRun {
   args: string;
   /** Connect as this user (`user@alias`). */
   user?: string | null;
+}
+
+/** Install a host's public key (`<IdentityFile>.pub`) with a password login. */
+export interface KeyInstallSpec {
+  hostId: string;
+  /** Remove the server's entries from known_hosts first (reinstalled server, reused IP). */
+  forgetHostKey: boolean;
+}
+
+export interface HostWithKey {
+  host: Host;
+  publicKey: string;
 }
 
 export interface TerminalOpened {
@@ -570,6 +582,8 @@ export const api = {
   hostsList: () => invoke<Host[]>("hosts_list"),
   hostGet: (id: string) => invoke<Host>("host_get", { id }),
   hostCreate: (input: HostInput) => invoke<Host>("host_create", { input }),
+  /** Creates the host and an ed25519 key pair at its identity file (a new file in ~/.ssh). */
+  hostCreateWithKey: (input: HostInput) => invoke<HostWithKey>("host_create_with_key", { input }),
   hostUpdate: (id: string, input: HostInput) => invoke<Host>("host_update", { id, input }),
   hostSetFavorite: (id: string, favorite: boolean) =>
     invoke<void>("host_set_favorite", { id, favorite }),
@@ -665,6 +679,13 @@ export const api = {
     onData: Channel<ArrayBuffer>,
     onExit: Channel<TerminalExit>,
   ) => invoke<TerminalOpened>("script_open", { run, cols, rows, onData, onExit }),
+  keyInstallOpen: (
+    spec: KeyInstallSpec,
+    cols: number,
+    rows: number,
+    onData: Channel<ArrayBuffer>,
+    onExit: Channel<TerminalExit>,
+  ) => invoke<TerminalOpened>("key_install_open", { spec, cols, rows, onData, onExit }),
   folderOpen: (
     spec: FolderSpec,
     resume: string | null,

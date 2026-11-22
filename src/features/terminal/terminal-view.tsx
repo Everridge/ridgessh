@@ -193,6 +193,15 @@ export function TerminalView({ tab, active }: { tab: TerminalTab; active: boolea
           return api.transferOpen(job.spec, cols, rows, onData, onExit);
         case "script":
           return api.scriptOpen(job.run, cols, rows, onData, onExit);
+        case "keyInstall":
+          // Run again keeps the host key that the first run accepted.
+          return api.keyInstallOpen(
+            { ...job.spec, forgetHostKey: job.spec.forgetHostKey && tab.generation === 0 },
+            cols,
+            rows,
+            onData,
+            onExit,
+          );
         case "folder":
           return api
             .folderOpen(job.spec, resume, job.recipeId ?? null, cols, rows, onData, onExit, onStep)

@@ -11,6 +11,7 @@ mod scripts;
 mod security;
 mod settings;
 mod ssh_config;
+mod ssh_keys;
 mod sync;
 mod terminal;
 mod transfer;
@@ -140,6 +141,8 @@ pub fn run() {
             commands::hosts::hosts_list,
             commands::hosts::host_get,
             commands::hosts::host_create,
+            commands::keys::host_create_with_key,
+            commands::keys::key_install_open,
             commands::hosts::host_update,
             commands::hosts::host_set_favorite,
             commands::hosts::hosts_move,

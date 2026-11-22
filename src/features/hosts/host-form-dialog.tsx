@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useFieldArray,
   useForm,
@@ -24,10 +24,17 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { GroupSelect } from "@/features/groups/group-select";
-import type { Host } from "@/lib/ipc";
+import { useTerminalStore } from "@/features/terminal/store";
+import { errorMessage, type Host } from "@/lib/ipc";
 import { useUiStore } from "@/stores/ui";
-import { hostFormSchema, toFormValues, toHostInput, type HostFormValues } from "./host-form";
-import { useCreateHost, useHostsData, useUpdateHost } from "./queries";
+import {
+  hostFormSchema,
+  newKeyPath,
+  toFormValues,
+  toHostInput,
+  type HostFormValues,
+} from "./host-form";
+import { useCreateHost, useCreateHostWithKey, useHostsData, useUpdateHost } from "./queries";
 import { TagInput } from "./tag-input";
 
 /** Create/edit dialog, driven by `useUiStore().hostForm`. */
@@ -52,29 +59,59 @@ function HostForm({ host, onClose }: { host?: Host; onClose: () => void }) {
   const selectHost = useUiStore((s) => s.selectHost);
   const create = useCreateHost();
   const update = useUpdateHost();
+  const createWithKey = useCreateHostWithKey();
+  // New hosts only: generate a key pair, install it on the server, forget a stale host key.
+  const [generateKey, setGenerateKey] = useState(false);
+  const [installKey, setInstallKey] = useState(false);
+  const [forgetHostKey, setForgetHostKey] = useState(false);
+  /** The identity file typed before "Generate" took over the field. */
+  const typedIdentity = useRef("");
   const form = useForm<HostFormValues>({
     resolver: zodResolver(hostFormSchema),
     defaultValues: toFormValues(host, { groupId: ui.view === "group" ? ui.groupId : null }),
   });
   const { register, handleSubmit, control, setValue, formState } = form;
-  const [groupId, tags, favorite, alias] = useWatch({
+  const [groupId, tags, favorite, alias, identityFile] = useWatch({
     control,
-    name: ["groupId", "tags", "favorite", "alias"],
+    name: ["groupId", "tags", "favorite", "alias", "identityFile"],
   });
   const errors = formState.errors;
-  const pending = create.isPending || update.isPending;
+  const pending = create.isPending || update.isPending || createWithKey.isPending;
+
+  // The generated key's path follows the alias.
+  useEffect(() => {
+    if (generateKey) setValue("identityFile", newKeyPath(alias), { shouldDirty: true });
+  }, [generateKey, alias, setValue]);
+
+  const toggleGenerate = (on: boolean) => {
+    if (on) typedIdentity.current = form.getValues("identityFile");
+    else setValue("identityFile", typedIdentity.current, { shouldDirty: true });
+    setGenerateKey(on);
+  };
+  const canInstall = generateKey || identityFile.trim() !== "";
+
+  const created = (h: Host) => {
+    selectHost(h.id);
+    onClose();
+    if (installKey && canInstall) {
+      useTerminalStore
+        .getState()
+        .openJob(
+          h,
+          { kind: "keyInstall", spec: { hostId: h.id, forgetHostKey } },
+          `Install key · ${h.alias}`,
+        );
+    }
+  };
 
   const submit = handleSubmit((values) => {
     const input = toHostInput(values, host?.color ?? null);
     if (host) {
       update.mutate({ id: host.id, input }, { onSuccess: onClose });
+    } else if (generateKey) {
+      createWithKey.mutate(input, { onSuccess: (r) => created(r.host) });
     } else {
-      create.mutate(input, {
-        onSuccess: (h) => {
-          selectHost(h.id);
-          onClose();
-        },
-      });
+      create.mutate(input, { onSuccess: created });
     }
   });
 
@@ -140,12 +177,25 @@ function HostForm({ host, onClose }: { host?: Host; onClose: () => void }) {
             <Input
               id="identityFile"
               placeholder="~/.ssh/id_ed25519"
+              readOnly={generateKey}
               {...register("identityFile")}
             />
           </Field>
           <Field label="ProxyJump" error={errors.proxyJump?.message} className="sm:col-span-6">
             <Input id="proxyJump" placeholder="bastion" {...register("proxyJump")} />
           </Field>
+          {!host && (
+            <KeySetup
+              generate={generateKey}
+              onGenerate={toggleGenerate}
+              install={installKey && canInstall}
+              canInstall={canInstall}
+              onInstall={setInstallKey}
+              forget={forgetHostKey}
+              onForget={setForgetHostKey}
+              error={createWithKey.error ? errorMessage(createWithKey.error) : null}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="users" className="grid gap-3 pt-2">
@@ -219,6 +269,61 @@ function HostForm({ host, onClose }: { host?: Host; onClose: () => void }) {
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+/** New hosts: generate a key pair, install it with a password login, forget a stale host key. */
+function KeySetup(p: {
+  generate: boolean;
+  onGenerate: (on: boolean) => void;
+  install: boolean;
+  canInstall: boolean;
+  onInstall: (on: boolean) => void;
+  forget: boolean;
+  onForget: (on: boolean) => void;
+  error: string | null;
+}) {
+  return (
+    <div className="grid gap-2 rounded-md border p-3 sm:col-span-6">
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={p.generate} onCheckedChange={(c) => p.onGenerate(c === true)} />
+        <KeyRoundIcon className="size-4" /> Generate a new key pair (ed25519)
+      </label>
+      <label
+        className={`flex items-start gap-2 text-sm ${p.canInstall ? "" : "text-muted-foreground"}`}
+      >
+        <Checkbox
+          className="mt-0.5"
+          checked={p.install}
+          disabled={!p.canInstall}
+          onCheckedChange={(c) => p.onInstall(c === true)}
+        />
+        <span>
+          Install the public key on the server
+          <span className="block text-xs text-muted-foreground">
+            Opens a terminal that logs in with the server&apos;s password once (typed at ssh&apos;s
+            prompt, never stored) and adds the key to ~/.ssh/authorized_keys.
+          </span>
+        </span>
+      </label>
+      {p.install && (
+        <label className="ml-6 flex items-start gap-2 text-sm">
+          <Checkbox
+            className="mt-0.5"
+            checked={p.forget}
+            onCheckedChange={(c) => p.onForget(c === true)}
+          />
+          <span>
+            Forget the server&apos;s saved host key first
+            <span className="block text-xs text-muted-foreground">
+              For a reinstalled server or a reused address. The old entry is removed from
+              known_hosts (a .old copy is kept) and ssh asks you to confirm the new fingerprint.
+            </span>
+          </span>
+        </label>
+      )}
+      {p.error && <p className="text-xs text-destructive">{p.error}</p>}
+    </div>
   );
 }
 

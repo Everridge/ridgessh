@@ -4,6 +4,18 @@ Each `## <version>` section becomes the GitHub release notes and the text shown 
 update dialog, so write it for users. Add changes under `## Unreleased`: the release workflow
 renames it to the version it releases. Without it, the commit subjects are listed instead.
 
+## Unreleased
+
+- Drag hosts onto a group in the sidebar to move them there (drag one, or all checked hosts).
+- New hosts can get their own key: tick "Generate a new key pair" and RidgeSSH creates
+  `~/.ssh/<alias>_ed25519` together with the host (existing files are never overwritten).
+- "Install the public key on the server" opens a terminal tab that logs in with the server's
+  password once (typed at ssh's own prompt, never stored) and adds the key to
+  `~/.ssh/authorized_keys`, like `ssh-copy-id`.
+- For a reinstalled server or a reused address, "Forget the server's saved host key first" removes
+  its old known_hosts entry (a `.old` copy is kept); ssh then asks you to confirm the new
+  fingerprint.
+
 ## 0.1.0
 
 First release, for Windows 10 and 11.
