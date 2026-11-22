@@ -4,7 +4,7 @@ Each `## <version>` section becomes the GitHub release notes and the text shown 
 update dialog, so write it for users. Add changes under `## Unreleased`: the release workflow
 renames it to the version it releases. Without it, the commit subjects are listed instead.
 
-## Unreleased
+## 0.1.1
 
 - Drag hosts onto a group in the sidebar to move them there (drag one, or all checked hosts).
 - New hosts can get their own key: tick "Generate a new key pair" and RidgeSSH creates
